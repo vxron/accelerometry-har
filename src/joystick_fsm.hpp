@@ -1,4 +1,5 @@
 #include "utils.hpp"
+#include "types.hpp"
 
 // Singleton object that owns states = JOYSTICK
 
@@ -6,21 +7,6 @@ struct state_transition_t {
     joystick_state_e from;
     joystick_event_e event;
     joystick_state_e to;
-};
-
-enum joystick_state_e {
-    JOYSTICK_STATE_PRESSED_CONFIRMED,
-    JOYSTICK_STATE_RELEASED_CONFIRMED,
-    JOYSTICK_STATE_UNQUALIFIED,
-    JOYSTICK_STATE_FAULT,
-    JOYSTICK_STATE_PRESSED_WAITING_DEBOUNCE,
-    JOYSTICK_STATE_RELEASED_WAITING_DEBOUNCE,
-};
-
-enum joystick_event_e {
-    JOYSTICK_EVENT_PRESS,
-    JOYSTICK_EVENT_RELEASE,
-    JOYSTICK_EVENT_DEBOUNCE_TIMEOUT
 };
 
 // state transition table
@@ -36,10 +22,12 @@ static const state_transition_t state_transition_table[] = {
 };
 
 // could call an interrupt for button handler
-static inline joystick_event_e process_inputs(joystickObj_C* joystick) {
+static inline joystick_event_e process_inputs(joystickObj_s* joystick) {
     // do nothing rn
 };
 
 // process_events (go thru table)
 
 // on_state_enter
+
+// run_state_machine

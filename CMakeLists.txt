@@ -10,7 +10,7 @@ option(USE_MOCK_HAL "Use mock I2C HAL" ON)
 
 add_executable(sensehat_fsm_demo
   src/main.cpp
-  src/lsm9ds1.c
+  src/lsm9ds1.cpp
 )
 
 target_include_directories(sensehat_fsm_demo PRIVATE
@@ -18,13 +18,22 @@ target_include_directories(sensehat_fsm_demo PRIVATE
 )
 
 if (WIN32 OR USE_MOCK_HAL)
-  target_sources(sensehat_fsm_demo PRIVATE src/i2c_hal.c)
   target_compile_definitions(sensehat_fsm_demo PRIVATE I2C_MOCK=1)
 else()
-  target_sources(sensehat_fsm_demo PRIVATE src/i2c_hal_linux.c)
+  # Linux/RPi build: use the real HAL
+  target_sources(sensehat_fsm_demo PRIVATE src/i2c_hal.cpp)
   target_compile_definitions(sensehat_fsm_demo PRIVATE I2C_LINUX=1)
+
+  # Self-test utility for HAL/IMU bring-up (only on Linux/RPi)
+  add_executable(i2c_selftest
+    src/i2c_selftest.cpp
+    src/i2c_hal.cpp
+  )
+  target_include_directories(i2c_selftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_compile_definitions(i2c_selftest PRIVATE I2C_LINUX=1)
 endif()
 
+# Defaults will be NOT calibration_mode (need to explicitly add argument)
 option(CALIBRATION_MODE "Enable calibration-mode joystick gating" OFF)
 if (CALIBRATION_MODE)
   target_compile_definitions(sensehat_fsm_demo PRIVATE CALIBRATION_MODE=1)
