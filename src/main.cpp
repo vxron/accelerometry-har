@@ -9,7 +9,7 @@
 #include "ringBuffer.hpp"
 #include "types.hpp"
 #include <atomic>
-#include "lsm9ds1.h"
+#include "lsm9ds1.hpp"
 #include <csignal>
 #include <iostream>
 #include <vector>
@@ -17,30 +17,6 @@
 #include <iomanip>
 #include <string_view>
 #include <cstdlib>   // getenv
-
-// ===================== logger setup =====================
-namespace {
-using clock_t = std::chrono::steady_clock;
-const auto g_t0 = clock_t::now();
-
-inline uint64_t ms_since_start() {
-    return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(clock_t::now() - g_t0).count();
-}
-inline bool verbose() {
-    const char* v = std::getenv("VERBOSE");
-    return v && *v && std::string_view(v) != "0";
-}
-
-thread_local const char* tlabel = "main";  // set per-thread
-
-#define LOG_ALWAYS(msg) do { \
-    std::cout << "[" << std::setw(6) << ms_since_start() << " ms] " \
-              << tlabel << ": " << msg << std::endl; \
-} while(0)
-
-#define LOG_DBG(msg) do { if (verbose()) LOG_ALWAYS(msg); } while(0)
-} 
-// ===================== logger end =======================
 
 // Global "please stop" flag set by Ctrl+C (SIGINT) to shut down cleanly
 static std::atomic<bool> g_stop{false};
@@ -54,8 +30,6 @@ static std::atomic<classes_e> g_label{CLASS_NO_LABEL}; // current label
 void handle_sigint(int) {
     g_stop.store(true,std::memory_order_relaxed);
 }
-
-
 
 void producer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
     // simulated sample stream 
@@ -145,6 +119,11 @@ int main() {
     // This builds a new thread that starts executing immediately, running producer_thread_rn in parallel with the main thread (same for cons)
     std::thread prod(producer_thread_fn,std::ref(ringBuf));
     std::thread cons(consumer_thread_fn,std::ref(ringBuf));
+
+#ifndef I2C_MOCK
+    // init lsm9ds1 (registers n that)
+    // init joystick
+#endif
 
     // CONTROL TIMEOUT HERE (TODO: MAKE IT A VARIABLE AT THE TOP)
     // Let the demo run for ~10 seconds (or hit Ctrl+C to stop early).

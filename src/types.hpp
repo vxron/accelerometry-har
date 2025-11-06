@@ -37,7 +37,7 @@ enum joystick_event_e {
 struct accel_burst_t {
     size_t burstLen_bytes = LSM9DS1_NUM_BYTES_PER_BURST;
     std::array<uint8_t, LSM9DS1_NUM_BYTES_PER_BURST> accel_burst{};
-    classes_e burst_label; // 0 in RUN mode
+    classes_e burst_label; // CLASS_NO_LABEL in RUN mode
 };
 
 struct labeled_sliding_window_t {

@@ -83,7 +83,7 @@ I2CBus::~I2CBus() noexcept {
     }
 }
 
-bool I2CBus::I2Cok() const{
+bool I2CBus::I2Cok() const noexcept{
     if(fd_ >= 0) {
         return true;
     }
@@ -97,7 +97,7 @@ int I2CBus::setSlave(uint8_t addr) noexcept {
         return -ENODEV;
     }
 
-     // Call the kernel to set the active 7-bit I2C address for this fd
+     // ioctl tells linux kernel which SLAVE ADDRESS (addr) on that bus you want to talk to
     int rc = ::ioctl(fd_, I2C_SLAVE, addr);
     
     if (rc == 0) {

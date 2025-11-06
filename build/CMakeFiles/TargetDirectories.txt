@@ -1,3 +1,4 @@
-C:/Users/fsdma/OneDrive/Documents/Uni Year 4/IBEHS 4QZ3/HARSys/build/CMakeFiles/sensehat_fsm_demo.dir
-C:/Users/fsdma/OneDrive/Documents/Uni Year 4/IBEHS 4QZ3/HARSys/build/CMakeFiles/edit_cache.dir
-C:/Users/fsdma/OneDrive/Documents/Uni Year 4/IBEHS 4QZ3/HARSys/build/CMakeFiles/rebuild_cache.dir
+/home/veron/accelerometry-har/build/CMakeFiles/sensehat_fsm_demo.dir
+/home/veron/accelerometry-har/build/CMakeFiles/i2c_selftest.dir
+/home/veron/accelerometry-har/build/CMakeFiles/edit_cache.dir
+/home/veron/accelerometry-har/build/CMakeFiles/rebuild_cache.dir
