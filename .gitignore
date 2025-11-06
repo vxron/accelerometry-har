@@ -1,0 +1,25 @@
+# Build dirs
+/build/
+/build-*/
+cmake-build-*/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+*.cmake
+install_manifest.txt
+
+# Objects/binaries
+*.o
+*.obj
+*.pdb
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+
+# IDE stuff
+.vscode/
+.idea/

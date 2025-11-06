@@ -24,10 +24,11 @@ notes:
 #include <utility>
 #include <atomic>
 #include "types.hpp"
+#include "configs.hpp"
 
 // semaphore template parameter type is ptrdiff_t (type for the update param in the release() function)
-// setting its max to 40 means we're saying, 40 is the max we can release at once (really we'll keep it at 1 for this)
-static constexpr std::ptrdiff_t RING_BUFFER_CAPACITY = 40;
+// setting its max to 250 means we're saying, 250 is the max we can release at once (really we'll keep it at 1 for this)
+static constexpr std::ptrdiff_t SEM_BUFFER_CAPACITY = 250;
 
 // "T" will be LSM9DS1 burst reads for this application (defined in types.h)
 template<typename T>
@@ -36,13 +37,13 @@ public:
 
     // constructor for sems with appropriate count inits is required
     ringBuffer_C()
-        : sem_buffer_slots_available(RING_BUFFER_CAPACITY),
+        : sem_buffer_slots_available(SEM_BUFFER_CAPACITY),
         sem_data_items_available(0) {}
 
     size_t const capacity_ = RING_BUFFER_CAPACITY;
     // a semaphore's count gives current number of allowed allocated 'slots' that can be 'taken'
-    std::counting_semaphore<RING_BUFFER_CAPACITY> sem_buffer_slots_available;
-    std::counting_semaphore<RING_BUFFER_CAPACITY> sem_data_items_available;
+    std::counting_semaphore<SEM_BUFFER_CAPACITY> sem_buffer_slots_available;
+    std::counting_semaphore<SEM_BUFFER_CAPACITY> sem_data_items_available;
 
     // ring buffer methods
     bool pop(T *dest);

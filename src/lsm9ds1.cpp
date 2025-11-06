@@ -1,15 +1,10 @@
 #include "lsm9ds1.hpp"
 
-lsm9ds1_driver(const char* dev_file_path, const uint8_t slave_addr) {
-  bus_ = I2CBus(dev_file_path);
-  i2c_addr_ = slave_addr;
-  is_open_ = true;
-}
+lsm9ds1_driver::lsm9ds1_driver(const char* dev_file_path, const uint8_t slave_addr)
+: bus_(dev_file_path), i2c_addr_(slave_addr), is_open_(false) {}
 
 int lsm9ds1_driver::lsm9ds1_init() {
-  if(is_open_ == false){
-    return 1; 
-  }
+  is_open_ = true;
   if (!bus_.I2Cok()) {
     std::cerr << "open /dev/i2c-1 failed\n";
     return 1;
@@ -33,27 +28,36 @@ int lsm9ds1_driver::lsm9ds1_init() {
   }
 
   // 2) Enable register auto-increment so bursts can step XL,XH,YL... (CTRL_REG8.IF_ADD_INC=1)
-  if (bus.writeReg8(CTRL_REG8, 0x04) != 0) {  // IF_ADD_INC=1
+  // All other values should be default (0)
+  if (bus_.writeReg8(CTRL_REG8, 0x04) != 0) {  // IF_ADD_INC=1
     std::cerr << "CTRL_REG8 write failed\n";
     return 1;
-
   }
-  // 3) Set ODR=100 Hz, FS=±2g (CTRL_REG6_XL = 0b011 << 5 = 0x60)
-  if (bus.writeReg8(CTRL_REG6_XL, 0x60) != 0) { // ODR=100Hz, FS=±2g, default BW
+
+// 3) What we want to write to CTRL_REG6_XL: 0b01110011
+    // ODR_XL[2:0], FS_XL[4:3], BW
+    // output data rate (ODR)  SAMPLING RATE stays at 119Hz thus 011
+    // FS_XL: (00: ±2g; 01: ±16 g; 10: ±4 g; 11: ±8 g) -> bits 3,4 should be 10 (choose +/- 4g for best op to detect jumping)
+    // will do basic anti-aliasing LPF bandwidth = 50 Hz (remove above 50 Hz) -> last 2 bits 11
+  if (bus_.writeReg8(CTRL_REG6_XL, 0b01110011) != 0) {
     std::cerr << "CTRL_REG6_XL write failed\n";
     return 1;
   }
 
-  // 4) Enable XYZ axes in CTRL_REG5_XL (bits 5:3 = 111 -> 0x38)
-  if (bus.writeReg8(CTRL_REG5_XL, 0x38) != 0) { // Xen/Yen/Zen enable
+  // 4) What we want to write to CTRL_REG5_XL: 0b00111000
+    // x,y,z axis enables bits [2:4] amd decimation bits [0:1]
+    // keep decimation bits at 0 (no downsampling, keep ODR 119Hz as sampling freq)
+  if (bus_.writeReg8(CTRL_REG5_XL, 0b00111000) != 0) {
     std::cerr << "CTRL_REG5_XL write failed\n";
     return 1;
   }
+
   return 0;
 }
 
 int lsm9ds1_driver::lsm9ds1_close() {
   is_open_ = false;
+  // TODO: implement power down on CTRL_REG6_XL
   return 0;
 }
 
@@ -62,7 +66,7 @@ int lsm9ds1_driver::lsm9ds1_read_burst(uint8_t start_reg, accel_burst_t* dest){
     return 1;
   }
   // Read to array  [xl xh yl yh zl zh]
-  bus_.readBurst6(start_reg, dest->accel_burst);
+  bus_.readBurst6(start_reg, dest->accel_burst.data()); // .data() turns std array to ptr
   // when we want to add label, we can just check state in main upon creating this burst
   return 0;
 }

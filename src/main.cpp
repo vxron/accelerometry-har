@@ -32,28 +32,43 @@ void handle_sigint(int) {
 }
 
 void producer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
-    // simulated sample stream 
-    uint8_t i = 0;
+
+#ifndef I2C_MOCK
+    // only producer talks to hw :)
+    lsm9ds1_driver lsm9ds1("/dev/i2c-1", ADDR_XG);
+    lsm9ds1.lsm9ds1_init();
+    // init joystick
+#endif
+
     using namespace std::chrono_literals;
+    logger::tlabel = "producer";
     LOG_ALWAYS("producer start");
 
     // ctrl+c check
     while(!g_stop.load(std::memory_order_relaxed)){
         accel_burst_t accel_burst_sample;
-        // fill it with fake data for now
+
+#ifdef I2C_MOCK
+        // simulated sample stream 
+        uint8_t i = 0;
         for(i=0;i<LSM9DS1_NUM_BYTES_PER_BURST;i++){
             accel_burst_sample.accel_burst[i] = i;
+            // mimick 119 Hz operation to match accelerometer sampling rate
+            // 119Hz = 0.008s period -> PER BURST
+            std::this_thread::sleep_for(8ms);
         }
+#else
+        lsm9ds1.lsm9ds1_read_burst(OUT_X_L_XL, &accel_burst_sample);
+        // error handle?
+#endif
         
         // blocking push function... will always (eventually) run and return true, 
         // unless queue is closed, in which case we want out
         if(!rb.push(accel_burst_sample)){
             break;
         }
+
         
-        // mimick 100 Hz operation to match accelerometer sampling rate
-        // 100Hz = 0.01s priod
-        std::this_thread::sleep_for(10ms);
     }
 
     // on thread shutdown, close queue to call release n unblock any consumer waiting for acquire
@@ -64,27 +79,28 @@ void producer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
 // when we close the ring buffer, [rb.close() above], pop will return false when consumer tries to pop -> clean exit; otherwise, blocking
 void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
     using namespace std::chrono_literals;
+    logger::tlabel = "consumer";
     LOG_ALWAYS("consumer start");
-    std::vector<accel_sample_s> input_datastream; // want to save as acc 16 bit int values for x,y,z... struct type ACCEL_SAMPLE_S
-    accel_burst_t raw_sample; 
+    std::vector<accel_sample_t> input_datastream; // want to save as acc 16 bit int values for x,y,z... struct type ACCEL_SAMPLE_S
+    accel_burst_t raw_sample;
     int16_t x = 0x0;
     int16_t y = 0x0;
     int16_t z = 0x0;
-
 
     while(1){
         if(!rb.pop(&raw_sample)){
             break;
         }
+#ifdef I2C_MOCK
         // little endian [xl xh yl yh zl zh]
         // is there an issue with this logic given ints are signed???
         // need to do raw shift/manipulation cast to unsigned and then reinterpret as signed at the end
         x=int16_t((uint16_t(raw_sample.accel_burst[1])<<8) | uint16_t(raw_sample.accel_burst[0]));
         y=int16_t((uint16_t(raw_sample.accel_burst[3])<<8) | uint16_t(raw_sample.accel_burst[2]));
         z=int16_t((uint16_t(raw_sample.accel_burst[5])<<8) | uint16_t(raw_sample.accel_burst[4]));
-        input_datastream.push_back(accel_sample_s{x,y,z});
-
-        std::this_thread::sleep_for(80ms); // slightly below 100Hz freq (slower than producer!)
+        // need to add label and idx
+        input_datastream.push_back(accel_sample_t{x,y,z});
+#endif
     }
 }
 
@@ -108,7 +124,7 @@ void joystick_thread_fn() {
 #endif
 
 int main() {
-    LOG_ALWAYS("start (VERBOSE=" << verbose() << ")");
+    LOG_ALWAYS("start (VERBOSE=" << logger::verbose << ")");
 
     ringBuffer_C<accel_burst_t> ringBuf;
 
@@ -119,11 +135,6 @@ int main() {
     // This builds a new thread that starts executing immediately, running producer_thread_rn in parallel with the main thread (same for cons)
     std::thread prod(producer_thread_fn,std::ref(ringBuf));
     std::thread cons(consumer_thread_fn,std::ref(ringBuf));
-
-#ifndef I2C_MOCK
-    // init lsm9ds1 (registers n that)
-    // init joystick
-#endif
 
     // CONTROL TIMEOUT HERE (TODO: MAKE IT A VARIABLE AT THE TOP)
     // Let the demo run for ~10 seconds (or hit Ctrl+C to stop early).

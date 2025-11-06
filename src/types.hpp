@@ -5,6 +5,7 @@
 #include <vector>
 #include <cstdint>
 #include "utils.hpp"
+#include "configs.hpp"
 
 constexpr uint8_t LSM9DS1_SLAVE_I2C_ADDRESS = 0x6A; // 0x6B on some systems
 constexpr uint8_t LSM9DS1_ACCEL_OUT_BASE_REG = 0x28; // starts on accel XL (little Endian)
@@ -16,7 +17,6 @@ enum classes_e {
     CLASS_SITTING,
     CLASS_STANDING,
     CLASS_TURNING_ON_SPOT,
-    CLASS_NO_LABEL,
 };
 
 enum joystick_state_e {
@@ -37,18 +37,23 @@ enum joystick_event_e {
 struct accel_burst_t {
     size_t burstLen_bytes = LSM9DS1_NUM_BYTES_PER_BURST;
     std::array<uint8_t, LSM9DS1_NUM_BYTES_PER_BURST> accel_burst{};
-    classes_e burst_label; // CLASS_NO_LABEL in RUN mode
 };
 
-struct labeled_sliding_window_t {
-    // nothn yet
+struct sliding_window_t {
+    // should take a number of accel_sample_t i believe
+    size_t const window_accel_sample_len = RING_BUFFER_CAPACITY; // period of about 200*8ms = 1.6s
+    size_t const window_accel_sample_hop = RING_BUFFER_CAPACITY/2; // amount to jump for next window
 };
 
-// dk if i need this :
-struct accel_sample_s {
+// I THINK THIS IS FOR CONSUMER SIDE TO FILL DATA !
+struct accel_sample_t {
     int16_t x;
     int16_t y;
     int16_t z;
+    uint32_t tick; // monotonic sample index
+#ifdef CALIBRATION_MODE
+    bool active_label; // should obtain from joystick state; 1 means we're in active block
+#endif
 };
 
 struct joystick_s {
