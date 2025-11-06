@@ -1,4 +1,0 @@
-/home/veron/accelerometry-har/build/CMakeFiles/sensehat_fsm_demo.dir
-/home/veron/accelerometry-har/build/CMakeFiles/i2c_selftest.dir
-/home/veron/accelerometry-har/build/CMakeFiles/edit_cache.dir
-/home/veron/accelerometry-har/build/CMakeFiles/rebuild_cache.dir

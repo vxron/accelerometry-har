@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/sensehat_fsm_demo.dir/src/main.cpp.o CMakeFiles/sensehat_fsm_demo.dir/src/lsm9ds1.cpp.o CMakeFiles/sensehat_fsm_demo.dir/src/i2c_hal.cpp.o -o sensehat_fsm_demo 

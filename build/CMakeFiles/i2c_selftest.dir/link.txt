@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/i2c_selftest.dir/src/i2c_selftest.cpp.o CMakeFiles/i2c_selftest.dir/src/i2c_hal.cpp.o -o i2c_selftest 
