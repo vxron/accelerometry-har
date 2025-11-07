@@ -9,3 +9,8 @@ This file must:
 - Zipmap disabled (so C++ gets a plain tensor)
 """
 
+# Training order will be walk -> stand -> sit -> jump
+# So we need to go through data and when theres a sequence of ones, add column for walk, and next time u run into ones, u know its stand, etc
+
+
+

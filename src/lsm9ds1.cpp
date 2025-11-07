@@ -4,23 +4,22 @@ lsm9ds1_driver::lsm9ds1_driver(const char* dev_file_path, const uint8_t slave_ad
 : bus_(dev_file_path), i2c_addr_(slave_addr), is_open_(false) {}
 
 int lsm9ds1_driver::lsm9ds1_init() {
-  is_open_ = true;
   if (!bus_.I2Cok()) {
     std::cerr << "open /dev/i2c-1 failed\n";
-    return 1;
+    return -ENODEV;
   }
 
   // Set slave to the accel/gyro die
-  if (bus_.setSlave(ADDR_XG) != 0) {
+  if (bus_.setSlave(i2c_addr_) != 0) {
     std::cerr << "setSlave failed (check address with i2cdetect)\n";
-    return 1;
+    return -ENODEV;
   }
 
   // 1) WHO_AM_I check on reg 0x0F -> make sure we're on accel (not gyro) -> expect 0x68
   uint8_t who = 0;
   if (bus_.readReg8(WHO_AM_I_XG, &who) != 0) {
     std::cerr << "WHO_AM_I read failed\n";
-    return 1;
+    return -ENODEV;
   }
   std::cout << "WHO_AM_I_XG = 0x" << std::hex << int(who) << std::dec << "\n";
   if (who != 0x68) {
@@ -31,7 +30,7 @@ int lsm9ds1_driver::lsm9ds1_init() {
   // All other values should be default (0)
   if (bus_.writeReg8(CTRL_REG8, 0x04) != 0) {  // IF_ADD_INC=1
     std::cerr << "CTRL_REG8 write failed\n";
-    return 1;
+    return -ENODEV;
   }
 
 // 3) What we want to write to CTRL_REG6_XL: 0b01110011
@@ -41,7 +40,7 @@ int lsm9ds1_driver::lsm9ds1_init() {
     // will do basic anti-aliasing LPF bandwidth = 50 Hz (remove above 50 Hz) -> last 2 bits 11
   if (bus_.writeReg8(CTRL_REG6_XL, 0b01110011) != 0) {
     std::cerr << "CTRL_REG6_XL write failed\n";
-    return 1;
+    return -ENODEV;
   }
 
   // 4) What we want to write to CTRL_REG5_XL: 0b00111000
@@ -49,9 +48,10 @@ int lsm9ds1_driver::lsm9ds1_init() {
     // keep decimation bits at 0 (no downsampling, keep ODR 119Hz as sampling freq)
   if (bus_.writeReg8(CTRL_REG5_XL, 0b00111000) != 0) {
     std::cerr << "CTRL_REG5_XL write failed\n";
-    return 1;
+    return -ENODEV;
   }
 
+  is_open_ = true;
   return 0;
 }
 
@@ -62,26 +62,26 @@ int lsm9ds1_driver::lsm9ds1_close() {
 }
 
 int lsm9ds1_driver::lsm9ds1_read_burst(uint8_t start_reg, accel_burst_t* dest){
-  if(is_open_ == false) {
-    return 1;
+  if(is_open_ == false || !dest) {
+    return -ENODEV;
   }
   // Read to array  [xl xh yl yh zl zh]
   std::array<uint8_t, 6> temp_arr;
-  bus_.readBurst6(start_reg, temp_arr.data()); // .data() turns std array to ptr
+  const int rc = bus_.readBurst6(start_reg, temp_arr.data()); // .data() turns std array to ptr
+  if (rc != 0) return rc; 
+
   // create accel_burst_t obj
   // first make them 16 bit uints so our shifting workings, then convert to signed
-  dest->x = int16_t(uint16_t(temp_arr[0]) | uint16_t(temp_arr[1]<<8));
-  dest->y = int16_t(uint16_t(temp_arr[2]) | uint16_t(temp_arr[3]<<8));
-  dest->z = int16_t(uint16_t(temp_arr[4]) | uint16_t(temp_arr[5]<<8));
-  dest->tick = dest->tick + 1;
+  dest->x = int16_t(uint16_t(temp_arr[0]) | uint16_t(temp_arr[1])<<8);
+  dest->y = int16_t(uint16_t(temp_arr[2]) | uint16_t(temp_arr[3])<<8);
+  dest->z = int16_t(uint16_t(temp_arr[4]) | uint16_t(temp_arr[5])<<8);
   return 0;
 }
 
 int lsm9ds1_driver::lsm9ds1_read_single_register(uint8_t reg, uint8_t* dest){
   if(is_open_ == false) {
-    return 1;
+    return -ENODEV;
   }
-  bus_.readReg8(reg, dest);
-  // when we want to add label, we can just check state in main upon creating this burst
-  return 0;
+  int rc = bus_.readReg8(reg, dest);
+  return rc;
 }

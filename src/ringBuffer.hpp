@@ -20,7 +20,7 @@ notes:
 #pragma once
 #include <semaphore>
 #include <cstddef> // std::size_t
-#include <array>
+#include <vector>
 #include <utility>
 #include <atomic>
 #include "types.hpp"
@@ -40,31 +40,33 @@ public:
     std::counting_semaphore<SEM_BUFFER_CAPACITY> sem_data_items_available;
 
     // Constructor
-    ringBuffer_C(size_t capacity);
+    explicit ringBuffer_C(size_t capacity);
 
     // ring buffer methods
     bool pop(T *dest);
     bool push(const T& data);
     size_t drain(T *dest);
     void close();
-    size_t get_count() const { return count_; }; 
+    size_t get_count() const { return count_.load(std::memory_order_acquire); }; 
 
 private:
     size_t const capacity_;
     size_t tailIdx_ = 0;
     size_t headIdx_ = 0;
-    size_t count_ = 0;
+    std::atomic<size_t> count_ = 0;
     std::atomic<bool> isClosed_ = 0; // open upon init; atomic because both threads use it
     // full/empty conditions based on semaphore logic
     // do not use isFull() for now --> can lead to data race since both consumer/producer read and can write by changing head/tail  
-    bool isFull() const { return 1 ? ((tailIdx_+1) % RING_BUFFER_CAPACITY) == headIdx_ : 0; }; // full if the next write index (tail+1, wrapped) would collide with head
+    bool isFull() const { return 1 ? count_.load(std::memory_order_acquire) == capacity_ : 0; }; // full if the next write index (tail+1, wrapped) would collide with head
     // data array
-    std::array<T,RING_BUFFER_CAPACITY> ringBufferArr;
+    std::vector<T> ringBufferArr;
 };
 
 template<typename T>
-ringBuffer_C::ringBuffer_C(size_t capacity)
-: capacity_(capacity), sem_buffer_slots_available(SEM_BUFFER_CAPACITY), sem_data_items_available(0) {}
+ringBuffer_C<T>::ringBuffer_C(size_t capacity)
+: capacity_(capacity), sem_buffer_slots_available(static_cast<std::ptrdiff_t>(capacity)), sem_data_items_available(0) {
+    ringBufferArr.resize(capacity_);
+}
 
 template<typename T>
 bool ringBuffer_C<T>::push (const T& data) { 
@@ -85,9 +87,8 @@ bool ringBuffer_C<T>::push (const T& data) {
 
     // push to tail
     ringBufferArr[tailIdx_] = data;
-    if(!isFull()){
-        count_++;
-    }
+    // sems guarantee there's space to add when push happens
+    count_++;
     
     // always finish push with tail increment & wrap-around if this increment causes tailIdx_ >= capacity
     tailIdx_ ++; 
@@ -101,7 +102,7 @@ bool ringBuffer_C<T>::push (const T& data) {
     return 1;
 }
 
-// pops until an item exists; returns false if closed
+// pops until an item exists; returns false if closed (BLOCKING)
 template<typename T>
 bool ringBuffer_C<T>::pop(T *dest) {
     if(isClosed_.load(std::memory_order_relaxed)) {
@@ -127,7 +128,7 @@ bool ringBuffer_C<T>::pop(T *dest) {
 // returns num of items
 template<typename T>
 size_t ringBuffer_C<T>::drain(T* dest) {
-    if(isClosed_){
+    if(isClosed_.load(std::memory_order_acquire)){
         return 0;
     }
     // pop everything from head to tail - continue checking try_acquire() on sem until it fails
@@ -138,6 +139,7 @@ size_t ringBuffer_C<T>::drain(T* dest) {
         }
         *(dest+i) = std::move(ringBufferArr[headIdx_]);
         headIdx_++;
+        count_--;
         // handle wrap around
         if(headIdx_>= capacity_){
             headIdx_ = 0;
@@ -151,7 +153,7 @@ size_t ringBuffer_C<T>::drain(T* dest) {
 
 template<typename T>
 void ringBuffer_C<T>::close() {
-    isClosed_ = 1;
+    isClosed_.store(true, std::memory_order_release);
     // free the semaphores incase they were waiting for an acq
     sem_buffer_slots_available.release();
     sem_data_items_available.release();

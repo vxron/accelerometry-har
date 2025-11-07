@@ -34,17 +34,5 @@ struct sliding_window_t {
     // should take a number of accel_burst_t i believe
     size_t const winLen = WINDOW_SAMPLES; // period of about 200*8ms = 1.6s
     size_t const winHop = WINDOW_HOP; // amount to jump for next window
-    ringBuffer_C<accel_burst_t> sliding_window(WINDOW_SAMPLES);
+    ringBuffer_C<accel_burst_t> sliding_window{WINDOW_SAMPLES};
 };
-
-// I THINK THIS IS FOR CONSUMER SIDE TO FILL DATA !
-struct accel_sample_t {
-    int16_t x;
-    int16_t y;
-    int16_t z;
-    uint32_t tick; // monotonic sample index
-#ifdef CALIBRATION_MODE
-    bool active_label; // should obtain from joystick state; 1 means we're in active block
-#endif
-};
-
