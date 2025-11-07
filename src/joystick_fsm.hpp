@@ -3,6 +3,9 @@
 
 // Singleton object that owns states = JOYSTICK
 
+// I2C/Register information for joystick
+
+
 struct state_transition_t {
     joystick_state_e from;
     joystick_event_e event;

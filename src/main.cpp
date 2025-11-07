@@ -58,8 +58,12 @@ void producer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
             std::this_thread::sleep_for(8ms);
         }
 #else
-        lsm9ds1.lsm9ds1_read_burst(OUT_X_L_XL, &accel_burst_sample);
-        // error handle?
+        lsm9ds1.lsm9ds1_read_burst(OUT_X_L_XL, &accel_burst_sample); // error handle?
+        // can this cause problems, is atomic sufficient or do i need to consider semaphore in addition?
+#ifdef CALIBRATION_MODE
+        accel_burst_sample.active_label = g_record.load(memory_order_acquire); // reader = acquire
+#endif
+
 #endif
         
         // blocking push function... will always (eventually) run and return true, 
@@ -105,21 +109,40 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
 }
 
 #ifdef CALIBRATION_MODE
-void joystick_thread_fn() {
+void joystick_thread_fn(const char* devnode = "/dev/input/event5", ringBuffer_C<accel_burst_t>& rb) {
+    logger::tlabel = "joystick";
+    int fd = ::open(devnode, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) {
+      LOG_ALWAYS("open(" << devnode << ") failed: " << std::strerror(errno));
+      return;
+    }
+    LOG_ALWAYS("opened " << devnode);
+
+    // should wait (poll for) button press event 
+    // then process that event & run state machine
     using namespace std::chrono_literals;
-    bool last = false;
-    auto last_change_time = clock_t::now();
+    using clock = std::chrono::steady_clock;
+    auto last_toggle = clock::now();
+
     while(!g_stop.load(std::memory_order_relaxed)){
-        bool pressed = /* non-blocking read from Sense HAT joystick */ false;
-        
-        if(pressed != last) { // check for transition
-            auto now = clock_t::now();
-            // debounce
-            if(std::chrono::duration_cast<std::chrono::milliseconds>(now - last_change).count() > 50){
-                // IMPLEMENT BETTER DEBOUNCE
+        input_event joystick_ev;
+        ssize_t n = ::read(fd,&ev, sizeof(ev));
+        if (ev.type != EV_KEY) continue;
+        // value: 1 for press, 0 for release, 2 for autorepeat
+        if(ev.value == 1 && is_center(ev.code)){
+            auto now = clock::now();
+            if(now - last_toggle > std::chrono(150ms)) {
+                // toggle g_record atomic on
+                bool new_state = !g_record.load(std::memory_order_relaxed);
+                g_record.store(new_state, std::memory_order_relaxed);
+                last_toggle = now;
+                LOG_ALWAYS(std::string("record = ") + (new_state ? "ON" : "OFF"));
             }
         }
+        
     }
+    ::close(fd);
+    LOG_ALWAYS("closed");
 }
 #endif
 
@@ -135,6 +158,9 @@ int main() {
     // This builds a new thread that starts executing immediately, running producer_thread_rn in parallel with the main thread (same for cons)
     std::thread prod(producer_thread_fn,std::ref(ringBuf));
     std::thread cons(consumer_thread_fn,std::ref(ringBuf));
+#ifdef CALIBRATION_MODE
+    std::thread joys(joystick_thread_fn,"/dev/input/event5",std::ref(ringBuf));
+#endif
 
     // CONTROL TIMEOUT HERE (TODO: MAKE IT A VARIABLE AT THE TOP)
     // Let the demo run for ~10 seconds (or hit Ctrl+C to stop early).
@@ -149,6 +175,9 @@ int main() {
     ringBuf.close();
     prod.join();
     cons.join(); // close "join" individual threads
+#ifdef CALIBRATION_MODE
+    joys.join();
+#endif
 
     return 0;
 }
