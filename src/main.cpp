@@ -61,6 +61,7 @@ void producer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
         lsm9ds1.lsm9ds1_read_burst(OUT_X_L_XL, &accel_burst_sample); // error handle?
         // can this cause problems, is atomic sufficient or do i need to consider semaphore in addition?
 #ifdef CALIBRATION_MODE
+// does this need a mutex guard or is atomic sufficient?
         accel_burst_sample.active_label = g_record.load(memory_order_acquire); // reader = acquire
 #endif
 
@@ -85,17 +86,58 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
     using namespace std::chrono_literals;
     logger::tlabel = "consumer";
     LOG_ALWAYS("consumer start");
-    std::vector<accel_sample_t> input_datastream; // want to save as acc 16 bit int values for x,y,z... struct type ACCEL_SAMPLE_S
-    accel_burst_t raw_sample;
-    int16_t x = 0x0;
-    int16_t y = 0x0;
-    int16_t z = 0x0;
+
+    sliding_window_t window; // should acquire the data for 1 window with that many pops n then increment by hop... 
+    accel_burst_t temp; // placeholder for accel burst storage 
+    
+    // wait for first signal that we've reached the WINDOW_SAMPLES length in the buffer
+    while(rb.get_count() < window.winLen){
+        // don't have enough data
+        continue;
+    }
+    // BUILD FIRST WINDOW - do we need a mutex guard here?  i kinda dont think so because no one else is gonna be popping? and consumer/producer push/pop is handled intrinsically by semaphores in ringbuf class
+    for(int i=0;i<window.winLen;i++){
+        if(!rb.pop(&temp)){
+            break; // throw error
+        }
+        else {
+            // pop successful -> push into sliding window
+            window.sliding_window.push(temp);
+        }
+    }
 
     while(1){
+        // emit window to feature extractor (DEEEP COPY)
+        featureExtractor.readin(window);
+        // pop out half of window for 50% hop
+        for(int k=0;k<window.winHop;k++){
+            window.sliding_window.pop();
+        }
+        // after the first time, we increment by hop size rather than window size (as long as we have hop size available in array, we can pull a window)
+        while(rb.get_count() < window.winHop){
+            continue;
+        }
+        // we have enough to make a window from head by adding the hop amount 
+        // keep the tail of the sliding window, overwrite the head (older) 
+        for(int j=0;j<window.winHop;j++){
+            if(!rb.pop(&temp)){
+                break; // throw error
+            }
+            else {
+                // pop successful -> push into sliding window
+                window.sliding_window.push(temp);
+            }
+        }
+    }
+        
+#ifdef I2C_MOCK
+        accel_burst_t raw_sample;
+        int16_t x = 0x0;
+        int16_t y = 0x0;
+        int16_t z = 0x0;
         if(!rb.pop(&raw_sample)){
             break;
         }
-#ifdef I2C_MOCK
         // little endian [xl xh yl yh zl zh]
         // is there an issue with this logic given ints are signed???
         // need to do raw shift/manipulation cast to unsigned and then reinterpret as signed at the end
@@ -128,7 +170,7 @@ void joystick_thread_fn(const char* devnode = "/dev/input/event5", ringBuffer_C<
         input_event joystick_ev;
         ssize_t n = ::read(fd,&ev, sizeof(ev));
         if (ev.type != EV_KEY) continue;
-        // value: 1 for press, 0 for release, 2 for autorepeat
+        // value: 1 for press, 0 for release
         if(ev.value == 1 && is_center(ev.code)){
             auto now = clock::now();
             if(now - last_toggle > std::chrono(150ms)) {
@@ -149,7 +191,7 @@ void joystick_thread_fn(const char* devnode = "/dev/input/event5", ringBuffer_C<
 int main() {
     LOG_ALWAYS("start (VERBOSE=" << logger::verbose << ")");
 
-    ringBuffer_C<accel_burst_t> ringBuf;
+    ringBuffer_C<accel_burst_t> ringBuf(RING_BUFFER_CAPACITY);
 
     // interrupt caused by SIGINT -> 'handle_singint' acts like ISR (callback handle)
     std::signal(SIGINT, handle_sigint);

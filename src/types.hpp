@@ -6,6 +6,7 @@
 #include <cstdint>
 #include "utils.hpp"
 #include "configs.hpp"
+#include "ringBuffer.hpp"
 
 constexpr uint8_t LSM9DS1_SLAVE_I2C_ADDRESS = 0x6A; // 0x6B on some systems
 constexpr uint8_t LSM9DS1_ACCEL_OUT_BASE_REG = 0x28; // starts on accel XL (little Endian)
@@ -19,30 +20,21 @@ enum classes_e {
     CLASS_TURNING_ON_SPOT,
 };
 
-enum joystick_state_e {
-    JOYSTICK_STATE_PRESSED_CONFIRMED,
-    JOYSTICK_STATE_RELEASED_CONFIRMED,
-    JOYSTICK_STATE_UNQUALIFIED,
-    JOYSTICK_STATE_FAULT,
-    JOYSTICK_STATE_PRESSED_WAITING_DEBOUNCE,
-    JOYSTICK_STATE_RELEASED_WAITING_DEBOUNCE,
-};
-
-enum joystick_event_e {
-    JOYSTICK_EVENT_PRESS,
-    JOYSTICK_EVENT_RELEASE,
-    JOYSTICK_EVENT_DEBOUNCE_TIMEOUT
-};
-
 struct accel_burst_t {
-    size_t burstLen_bytes = LSM9DS1_NUM_BYTES_PER_BURST;
-    std::array<uint8_t, LSM9DS1_NUM_BYTES_PER_BURST> accel_burst{};
+    int16_t x;
+    int16_t y;
+    int16_t z;
+    uint32_t tick; // monotonic sample index
+#ifdef CALIBRATION_MODE
+    bool active_label; // should obtain from joystick state; 1 means we're in active block
+#endif
 };
 
 struct sliding_window_t {
-    // should take a number of accel_sample_t i believe
-    size_t const window_accel_sample_len = RING_BUFFER_CAPACITY; // period of about 200*8ms = 1.6s
-    size_t const window_accel_sample_hop = RING_BUFFER_CAPACITY/2; // amount to jump for next window
+    // should take a number of accel_burst_t i believe
+    size_t const winLen = WINDOW_SAMPLES; // period of about 200*8ms = 1.6s
+    size_t const winHop = WINDOW_HOP; // amount to jump for next window
+    ringBuffer_C<accel_burst_t> sliding_window(WINDOW_SAMPLES);
 };
 
 // I THINK THIS IS FOR CONSUMER SIDE TO FILL DATA !
@@ -56,8 +48,3 @@ struct accel_sample_t {
 #endif
 };
 
-struct joystick_s {
-    joystick_state_e state;
-    joystick_state_e prevState;
-    sw_timer_t debounceTimer;
-};

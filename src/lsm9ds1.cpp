@@ -66,8 +66,14 @@ int lsm9ds1_driver::lsm9ds1_read_burst(uint8_t start_reg, accel_burst_t* dest){
     return 1;
   }
   // Read to array  [xl xh yl yh zl zh]
-  bus_.readBurst6(start_reg, dest->accel_burst.data()); // .data() turns std array to ptr
-  // when we want to add label, we can just check state in main upon creating this burst
+  std::array<uint8_t, 6> temp_arr;
+  bus_.readBurst6(start_reg, temp_arr.data()); // .data() turns std array to ptr
+  // create accel_burst_t obj
+  // first make them 16 bit uints so our shifting workings, then convert to signed
+  dest->x = int16_t(uint16_t(temp_arr[0]) | uint16_t(temp_arr[1]<<8));
+  dest->y = int16_t(uint16_t(temp_arr[2]) | uint16_t(temp_arr[3]<<8));
+  dest->z = int16_t(uint16_t(temp_arr[4]) | uint16_t(temp_arr[5]<<8));
+  dest->tick = dest->tick + 1;
   return 0;
 }
 

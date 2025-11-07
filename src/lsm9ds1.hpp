@@ -12,6 +12,7 @@ dependencies:
 
 # pragma once
 #include "i2c_hal.hpp"
+#include <array>
 
 // LSM9DS1 XG (accel) reg addresses 
 static constexpr uint8_t ADDR_XG        = 0x6A;   // slave address of LSM9DS1 chip on sense hat

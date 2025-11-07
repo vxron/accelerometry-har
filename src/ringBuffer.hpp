@@ -35,25 +35,25 @@ template<typename T>
 class ringBuffer_C {
 public:
 
-    // constructor for sems with appropriate count inits is required
-    ringBuffer_C()
-        : sem_buffer_slots_available(SEM_BUFFER_CAPACITY),
-        sem_data_items_available(0) {}
-
-    size_t const capacity_ = RING_BUFFER_CAPACITY;
     // a semaphore's count gives current number of allowed allocated 'slots' that can be 'taken'
     std::counting_semaphore<SEM_BUFFER_CAPACITY> sem_buffer_slots_available;
     std::counting_semaphore<SEM_BUFFER_CAPACITY> sem_data_items_available;
+
+    // Constructor
+    ringBuffer_C(size_t capacity);
 
     // ring buffer methods
     bool pop(T *dest);
     bool push(const T& data);
     size_t drain(T *dest);
     void close();
+    size_t get_count() const { return count_; }; 
 
 private:
+    size_t const capacity_;
     size_t tailIdx_ = 0;
     size_t headIdx_ = 0;
+    size_t count_ = 0;
     std::atomic<bool> isClosed_ = 0; // open upon init; atomic because both threads use it
     // full/empty conditions based on semaphore logic
     // do not use isFull() for now --> can lead to data race since both consumer/producer read and can write by changing head/tail  
@@ -62,6 +62,9 @@ private:
     std::array<T,RING_BUFFER_CAPACITY> ringBufferArr;
 };
 
+template<typename T>
+ringBuffer_C::ringBuffer_C(size_t capacity)
+: capacity_(capacity), sem_buffer_slots_available(SEM_BUFFER_CAPACITY), sem_data_items_available(0) {}
 
 template<typename T>
 bool ringBuffer_C<T>::push (const T& data) { 
@@ -82,18 +85,10 @@ bool ringBuffer_C<T>::push (const T& data) {
 
     // push to tail
     ringBufferArr[tailIdx_] = data;
-
-/* // this drop-oldest clause is dead code with sems (acquire()) that only let u push when there's slots available...
-// u will never reach here unless there are slots available
-// HOWEVER -> u can change this logic down the line if u want and use try_acquire() then go here if acquire fails...
-    else {
-        // trying to write to full queue -> use drop oldest approach
-        // head and tail should be at the same index in this case
-        ASSERT(headIdx_ == tailIdx_);
-        ringBufferArr[tailIdx_] = std::move(data);
-        headIdx_ ++; // overwrite, shift head 
+    if(!isFull()){
+        count_++;
     }
-*/
+    
     // always finish push with tail increment & wrap-around if this increment causes tailIdx_ >= capacity
     tailIdx_ ++; 
     if(tailIdx_ >= capacity_) {
@@ -124,6 +119,7 @@ bool ringBuffer_C<T>::pop(T *dest) {
         headIdx_ = 0;
     }
     sem_buffer_slots_available.release(); // added a slot
+    count_--; 
     return 1;
 }
 
