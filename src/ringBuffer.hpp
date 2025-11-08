@@ -24,7 +24,6 @@ notes:
 #include <utility>
 #include <atomic>
 #include "types.hpp"
-#include "configs.hpp"
 
 // semaphore template parameter type is ptrdiff_t (type for the update param in the release() function)
 // setting its max to 250 means we're saying, 250 is the max we can release at once (really we'll keep it at 1 for this)
@@ -55,9 +54,8 @@ private:
     size_t headIdx_ = 0;
     std::atomic<size_t> count_ = 0;
     std::atomic<bool> isClosed_ = 0; // open upon init; atomic because both threads use it
-    // full/empty conditions based on semaphore logic
-    // do not use isFull() for now --> can lead to data race since both consumer/producer read and can write by changing head/tail  
-    bool isFull() const { return 1 ? count_.load(std::memory_order_acquire) == capacity_ : 0; }; // full if the next write index (tail+1, wrapped) would collide with head
+    // full/empty conditions based on semaphore logic 
+    bool isFull() const { return 1 ? count_.load(std::memory_order_acquire) == capacity_ : 0; };
     // data array
     std::vector<T> ringBufferArr;
 };

@@ -28,15 +28,15 @@ else()
   target_compile_definitions(sensehat_fsm_demo PRIVATE I2C_MOCK=0)
 
   # --- Self-test utility (Linux/RPi only)
-  add_executable(i2c_selftest
-    src/i2c_selftest.cpp
-    src/i2c_hal.cpp
-    src/lsm9ds1.cpp
-    src/logger.cpp
-  )
-  target_include_directories(i2c_selftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_compile_definitions(i2c_selftest PRIVATE I2C_LINUX=1)
-  target_link_libraries(i2c_selftest PRIVATE Threads::Threads)
+  #add_executable(i2c_selftest
+    #src/i2c_selftest.cpp
+    #src/i2c_hal.cpp
+    #src/lsm9ds1.cpp
+    #src/logger.cpp
+  #)
+  #target_include_directories(i2c_selftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  #target_compile_definitions(i2c_selftest PRIVATE I2C_LINUX=1)
+  #target_link_libraries(i2c_selftest PRIVATE Threads::Threads)
 endif()
 
 if (CALIBRATION_MODE)

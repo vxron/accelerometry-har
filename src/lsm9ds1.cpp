@@ -1,5 +1,7 @@
 #include "lsm9ds1.hpp"
 
+static uint32_t dbg = 0;
+
 lsm9ds1_driver::lsm9ds1_driver(const char* dev_file_path, const uint8_t slave_addr)
 : bus_(dev_file_path), i2c_addr_(slave_addr), is_open_(false) {}
 
@@ -62,6 +64,7 @@ int lsm9ds1_driver::lsm9ds1_close() {
 }
 
 int lsm9ds1_driver::lsm9ds1_read_burst(uint8_t start_reg, accel_burst_t* dest){
+  LOG_ALWAYS("lsm9ds1_read_burst enter, reg=" << int(start_reg));
   if(is_open_ == false || !dest) {
     return -ENODEV;
   }
@@ -69,6 +72,15 @@ int lsm9ds1_driver::lsm9ds1_read_burst(uint8_t start_reg, accel_burst_t* dest){
   std::array<uint8_t, 6> temp_arr;
   const int rc = bus_.readBurst6(start_reg, temp_arr.data()); // .data() turns std array to ptr
   if (rc != 0) return rc; 
+
+  if ((++dbg % 120) == 0) { // ~1s at 119Hz
+    LOG_ALWAYS("raw: "
+      << int(temp_arr[0]) << "," << int(temp_arr[1]) << " "
+      << int(temp_arr[2]) << "," << int(temp_arr[3]) << " "
+      << int(temp_arr[4]) << "," << int(temp_arr[5]));
+  }
+
+
 
   // create accel_burst_t obj
   // first make them 16 bit uints so our shifting workings, then convert to signed

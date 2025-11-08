@@ -5,8 +5,6 @@
 #include <vector>
 #include <cstdint>
 #include "utils.hpp"
-#include "configs.hpp"
-#include "ringBuffer.hpp"
 
 constexpr uint8_t LSM9DS1_SLAVE_I2C_ADDRESS = 0x6A; // 0x6B on some systems
 constexpr uint8_t LSM9DS1_ACCEL_OUT_BASE_REG = 0x28; // starts on accel XL (little Endian)
@@ -28,11 +26,4 @@ struct accel_burst_t {
 #ifdef CALIBRATION_MODE
     bool active_label; // should obtain from joystick state; 1 means we're in active block
 #endif
-};
-
-struct sliding_window_t {
-    // should take a number of accel_burst_t i believe
-    size_t const winLen = WINDOW_SAMPLES; // period of about 200*8ms = 1.6s
-    size_t const winHop = WINDOW_HOP; // amount to jump for next window
-    ringBuffer_C<accel_burst_t> sliding_window{WINDOW_SAMPLES};
 };
