@@ -23,3 +23,47 @@ install_manifest.txt
 # IDE stuff
 .vscode/
 .idea/
+
+# Python cache & build
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+.cache/
+.pytest_cache/
+.coverage
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Large/derived model files anywhere
+*.onnx
+*.joblib
+*.pkl
+*.model
+*.bin
+
+# Project outputs
+# data: raw/processed recordings etc.
+data/
+!data/.gitkeep
+# models: trained artifacts
+models/
+!models/.gitkeep
+# reports: generated markdown/plots
+reports/
+!reports/.gitkeep
+# logs & misc artifacts
+logs/
+artifacts/
+sklearn_cache/
