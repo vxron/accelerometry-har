@@ -1484,4 +1484,3 @@ if __name__ == "__main__":
     print(f"[OK] Saved {outdir/'meta.json'}")
     print("[DONE] Static outer acc (mean): {:.3f}".format(static_cv))
     print("[DONE] Dynamic outer acc (mean): {:.3f}".format(dynamic_cv))
-
