@@ -8,15 +8,7 @@ Usage (example):
     from har_export import export_har_hierarchy
 
     export_har_hierarchy(
-        intensity_model=intensity_model,
-        static_model=static_svm,
-        dynamic_model=dyn_svm,
-        feat_names=feat_names,
-        int_sel_idx=INT_SEL_IDX,
-        static_sel_idx=STATIC_SEL_IDX,
-        dyn_sel_idx=DYN_SEL_IDX,
-        label_name_to_id=LABEL_NAME_TO_ID,
-        out_dir="artifacts"
+        (args...)
     )
 """
 
@@ -101,10 +93,10 @@ def export_har_hierarchy(
         Pre-classifier: outputs 0 (static) or 1 (dynamic).
 
     static_model : sklearn Pipeline/estimator
-        Binary SVM for static branch: outputs 0 (stand) or 1 (sit).
+        Binary SVM for static branch: outputs 0 (sit) or 1 (stand).
 
     dynamic_model : sklearn Pipeline/estimator
-        Binary SVM for dynamic branch: outputs 0 (walk) or 1 (turn).
+        Binary SVM for dynamic branch: outputs 0 (turn) or 1 (walk).
 
     feat_names : list of str
         Global feature name order (matches Xf_* columns).
@@ -120,7 +112,7 @@ def export_har_hierarchy(
     print(f"[EXPORT] Saving ONNX models to: {out_dir}")
 
 
-    # --- 1) Export ONNX files ---
+    # 1) Export ONNX files
     int_path   = out_dir / intensity_filename
     static_path = out_dir / static_filename
     dyn_path    = out_dir / dynamic_filename
@@ -146,7 +138,7 @@ def export_har_hierarchy(
         input_name="input",
     )
 
-    # --- 2) Build metadata dictionary ---
+    # 2) Build metadata dictionary 
     # Ensure everything JSON serializable
     feat_names = list(feat_names)
     int_sel_idx   = [int(i) for i in int_sel_idx]
@@ -159,24 +151,24 @@ def export_har_hierarchy(
             "onnx_file": int_path.name,
             "feature_indices": int_sel_idx,
             "classes": {
-                "0": "static",
-                "1": "dynamic",
+                "static" : 0,
+                "dynamic" : 1,
             },
         },
         "static_branch": {
             "onnx_file": static_path.name,
             "feature_indices": static_sel_idx,
             "branch_labels": {
-                "0": "sit",
-                "1": "stand",
+                "sit" : 0,
+                "stand" : 1,
             },
         },
         "dynamic_branch": {
             "onnx_file": dyn_path.name,
             "feature_indices": dyn_sel_idx,
             "branch_labels": {
-                "0": "turn",
-                "1": "walk",
+                "turn" : 0,
+                "walk" : 1,
             },
         },
         "label_name_to_id": {
@@ -187,7 +179,7 @@ def export_har_hierarchy(
     meta_path = out_dir / meta_filename
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
-    print(f"[META] Saved → {meta_path}")
+    print(f"[META] Saved {meta_path}")
 
     return {
         "onnx_intensity": str(int_path),

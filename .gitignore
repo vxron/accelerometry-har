@@ -67,3 +67,4 @@ reports/
 logs/
 artifacts/
 sklearn_cache/
+plots/
