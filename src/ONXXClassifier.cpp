@@ -7,12 +7,6 @@
 
 using json = nlohmann::json;
 
-enum class ClassifierStage_E {
-    Intensity,
-    StaticBranch,
-    DynamicBranch,
-};
-
 OnnxClassifier_C::OnnxClassifier_C(const std::string& meta_json_path) 
   : env_(ORT_LOGGING_LEVEL_WARNING, "har"), mem_info_(Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU)) 
 {
@@ -75,57 +69,68 @@ OnnxClassifier_C::OnnxClassifier_C(const std::string& meta_json_path)
     auto static_model_path = (base_dir / static_onnx_file).string();
     auto dyn_model_path    = (base_dir / dyn_onnx_file).string();
 
-    sess_int_    = Ort::Session(env_, int_model_path.c_str(), opts);
-    sess_static_ = Ort::Session(env_, static_model_path.c_str(), opts);
-    sess_dynamic_= Ort::Session(env_, dyn_model_path.c_str(), opts);
+#ifdef _WIN32
+    std::wstring w_int    = std::filesystem::path(int_model_path).wstring();
+    std::wstring w_static = std::filesystem::path(static_model_path).wstring();
+    std::wstring w_dyn    = std::filesystem::path(dyn_model_path).wstring();
+
+    sess_intensity_ = std::make_unique<Ort::Session>(env_, w_int.c_str(), opts);
+    sess_static_    = std::make_unique<Ort::Session>(env_, w_static.c_str(), opts);
+    sess_dynamic_   = std::make_unique<Ort::Session>(env_, w_dyn.c_str(), opts);
+#else
+    sess_intensity_ = std::make_unique<Ort::Session>(env_, int_model_path.c_str(),    opts);
+    sess_static_    = std::make_unique<Ort::Session>(env_, static_model_path.c_str(), opts);
+    sess_dynamic_   = std::make_unique<Ort::Session>(env_, dyn_model_path.c_str(),    opts);
+#endif
 
     // ========== (4) cache input/output tensor names ==============
     // (this is bcuz onnx runtime stores io names dynamically as heap allocated strings & we don't want to reallocate everytime we make a classification)
     Ort::AllocatorWithDefaultOptions allocator;
 
     {
-        auto in_name  = sess_int_.GetInputNameAllocated(0, allocator);
-        auto out_name = sess_int_.GetOutputNameAllocated(0, allocator);
+        auto in_name  = sess_intensity_->GetInputNameAllocated(0, allocator);
+        auto out_name = sess_intensity_->GetOutputNameAllocated(0, allocator);
         input_name_int_  = in_name.get();
         output_name_int_ = out_name.get();
     }
     {
-        auto in_name  = sess_static_.GetInputNameAllocated(0, allocator);
-        auto out_name = sess_static_.GetOutputNameAllocated(0, allocator);
+        auto in_name  = sess_static_->GetInputNameAllocated(0, allocator);
+        auto out_name = sess_static_->GetOutputNameAllocated(0, allocator);
         input_name_static_  = in_name.get();
         output_name_static_ = out_name.get();
     }
     {
-        auto in_name  = sess_dynamic_.GetInputNameAllocated(0, allocator);
-        auto out_name = sess_dynamic_.GetOutputNameAllocated(0, allocator);
+        auto in_name  = sess_dynamic_->GetInputNameAllocated(0, allocator);
+        auto out_name = sess_dynamic_->GetOutputNameAllocated(0, allocator);
         input_name_dynamic_  = in_name.get();
         output_name_dynamic_ = out_name.get();
     }
+
 }
 
 int OnnxClassifier_C::run_model(const std::vector<float>& full_features, ClassifierStage_E model) const {
     // ====== (1) gather ptrs to what we need for the specific model ======
     const std::vector<int>* ftr_idxs = nullptr; // features selected for it
-    const Ort::Session* sess = nullptr; // ref to onxx model
+    Ort::Session* sess = nullptr; // ref to onxx model
     const char* input_name = nullptr; // input tensor allocated name
     const char* output_name = nullptr; // output tensor allocated name
 
     switch(model){
         case ClassifierStage_E::Intensity:
             ftr_idxs    = &cfg_.intensity_idx;
-            sess        = &sess_int_;
+            sess        = sess_intensity_.get();
             input_name  = input_name_int_.c_str(); // cached i/o, cstr is alr a ptr
             output_name = output_name_int_.c_str();
             break;
         case ClassifierStage_E::StaticBranch:
             ftr_idxs    = &cfg_.static_idx;
-            sess        = &sess_static_;
+            sess        = sess_static_.get();
             input_name  = input_name_static_.c_str();
             output_name = output_name_static_.c_str();
             break;
         case ClassifierStage_E::DynamicBranch:
             ftr_idxs    = &cfg_.dynamic_idx;
-            sess        = &sess_dynamic_;
+            sess        = sess_dynamic_.get();
             input_name  = input_name_dynamic_.c_str();
             output_name = output_name_dynamic_.c_str();
             break;
@@ -146,14 +151,13 @@ int OnnxClassifier_C::run_model(const std::vector<float>& full_features, Classif
         auto it = std::find(ftr_idxs->begin(), ftr_idxs->end(),currIdx);
         if (it!=ftr_idxs->end()){ // there was an occurence found; choose this ftr
             // get idx
-            size_t pos = static_cast<std::size_t>(std::distance(ftr_idxs->begin(), it));
+            std::size_t pos = static_cast<std::size_t>(std::distance(ftr_idxs->begin(), it));
+            // safety guard
+            if (pos >= input_vals.size()) {
+                throw std::out_of_range("run_model: feature position out of range.");
+            }
             input_vals[pos]=ftr; // place ftr in correct onnx order
         }
-        // safety guard
-        if (pos >= input_vals.size()) {
-            throw std::out_of_range("run_model: feature position out of range.");
-        }
-
         currIdx++;
     }
     
@@ -198,7 +202,7 @@ int OnnxClassifier_C::classify(const std::vector<float>& full_features) {
     
     int intensity_class = run_model(full_features, ClassifierStage_E::Intensity);
     if(intensity_class == cfg_.intensity_static) {
-        int static_class = run_model(full_features, StaticBranch);
+        int static_class = run_model(full_features, ClassifierStage_E::StaticBranch);
         if(static_class == cfg_.static_sit){
             return cfg_.sit_id;
         }
@@ -210,7 +214,7 @@ int OnnxClassifier_C::classify(const std::vector<float>& full_features) {
         }
     }
     else if(intensity_class == cfg_.intensity_dynamic) {
-        int dyn_class = run_model(full_features, DynamicBranch);
+        int dyn_class = run_model(full_features, ClassifierStage_E::DynamicBranch);
         if(dyn_class == cfg_.dynamic_walk){
             return cfg_.walk_id;
         }

@@ -124,14 +124,14 @@ static FeatureKind_E feature_kind_from_name(const std::string& name) {
     throw std::runtime_error("feature_kind_from_name: unknown feature name in JSON (not in registry)");
 }
 
-FeatureVector_C::FeatureVector_C(const OnnxConfigs_S& cfg) : cfg_(cfg), ops_(), ctx_{}   {
+FeatureVector_C::FeatureVector_C(const OnnxConfigs_S& cfg) : cfg_(cfg), ctx_{}   {
     ops_.reserve(cfg_.feat_names.size());
     for (const auto& ftr : cfg_.feat_names){
         ops_.push_back(feature_kind_from_name(ftr));
     }
 }
 
-static void extract_xyz(sliding_window_t window,
+void FeatureVector_C::extract_xyz(const std::vector<accel_burst_t>& window,
         std::vector<float>& x,
         std::vector<float>& y,
         std::vector<float>& z)
@@ -140,20 +140,25 @@ static void extract_xyz(sliding_window_t window,
     x.clear();
     y.clear();
     z.clear();
+    x.reserve(window.size());
+    y.reserve(window.size());
+    z.reserve(window.size());
     // every x within accel-burst-t gets appended to x vec
     // every y within accel-burst-t gets appended to y vec
     // every z within accel-burst-t gets appended to z vec
     accel_burst_t temp; 
-    for(int i =0; i<window.winLen; i++){
-        window.sliding_window.pop(&temp);
-        x.push_back(temp.x);
-        y.push_back(temp.y);
-        z.push_back(temp.z);
+    for(int i =0; i<window.size(); i++){
+        x.push_back(window[i].x);
+        y.push_back(window[i].y);
+        z.push_back(window[i].z);
     }
 }
 
 // ========================== MAIN API ================================================
-std::vector<float> FeatureVector_C::writeFeatureVector(sliding_window_t window){
+std::vector<float> FeatureVector_C::writeFeatureVector(const sliding_window_t& windowObj){
+    // 0) get snapshot of ring buffer (data) part of window 
+    std::vector<accel_burst_t> window;
+    windowObj.sliding_window.get_data_snapshot(&window);
     // 1) extract channels for cache
     extract_xyz(window, ctx_.x, ctx_.y, ctx_.z);
     // 2) reset caches for this window
@@ -164,7 +169,7 @@ std::vector<float> FeatureVector_C::writeFeatureVector(sliding_window_t window){
     ctx_.freq.clear();
     ctx_.power.clear();
     ctx_.ar_resvar = 0.0f;
-    for (int i = 0; i < FeatureCache_S::AR_ORDER; ++i) {
+    for (int i = 0; i < AR_ORDER; ++i) {
         ctx_.ar_coeffs[i] = 0.0f;
     }
 
@@ -183,8 +188,7 @@ std::vector<float> FeatureVector_C::writeFeatureVector(sliding_window_t window){
 }
 
 
-static float FeatureVector_C::compute_one_feature(FeatureKind_E kind,
-                                 FeatureCache_S& ctx)
+float FeatureVector_C::compute_one_feature(FeatureKind_E kind, FeatureCache_S& ctx)
 {
     switch (kind) {
         // ---- Per-axis stats ----
@@ -422,7 +426,7 @@ static void compute_psd_if_needed(FeatureCache_S& ctx) {
     for (size_t k = 0; k < K; ++k) {
         double re = 0.0;
         double im = 0.0;
-        double omega = -2.0 * M_PI * static_cast<double>(k) / static_cast<double>(N);
+        double omega = -2.0 * 3.14 * static_cast<double>(k) / static_cast<double>(N);
         for (size_t n = 0; n < N; ++n) {
             double angle = omega * static_cast<double>(n);
             double val = m[n];
@@ -545,7 +549,7 @@ static void compute_ar4_if_needed(FeatureCache_S& ctx) {
     if (ctx.ar_computed_this_window) return;
 
     // TODO: implement proper AR(4) here (Yule-Walker / Burg).
-    for (int i = 0; i < FeatureCache_S::AR_ORDER; ++i) {
+    for (int i = 0; i < AR_ORDER; ++i) {
         ctx.ar_coeffs[i] = 0.0f;
     }
     ctx.ar_resvar = 0.0f;

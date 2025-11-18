@@ -5,7 +5,21 @@ Goal:
 #pragma once
 #include <vector>
 #include <string>
+#include <memory>
 #include <onnxruntime_cxx_api.h>
+
+#include <onnxruntime_c_api.h>
+
+#define STR_HELPER(x) #x
+#define STR(x) STR_HELPER(x)
+#pragma message(">>> ORT_API_VERSION used by this build = " STR(ORT_API_VERSION))
+
+
+enum class ClassifierStage_E {
+    Intensity,
+    StaticBranch,
+    DynamicBranch,
+};
 
 // These must come from parsing json meta.
 struct OnnxConfigs_S {
@@ -38,13 +52,13 @@ public:
     // config getter for feature extractor and other modules who need to know (& cant change these configs)
     const OnnxConfigs_S getConfigs() const { return cfg_; };
 private:
-    int run_model(const std::vector<float>& full_features, ClassifierStages_E model) const;
+    int run_model(const std::vector<float>& full_features, ClassifierStage_E model) const;
     
     // ONXX runtime stuff
     Ort::Env env_;
-    Ort::Session sess_intensity_;
-    Ort::Session sess_static_;
-    Ort::Session sess_dynamic_;
+    std::unique_ptr<Ort::Session> sess_intensity_;
+    std::unique_ptr<Ort::Session> sess_static_;
+    std::unique_ptr<Ort::Session> sess_dynamic_;
     Ort::MemoryInfo mem_info_;
 
     // Cached IO names (so we don't reallocate on the heap each time we classify)

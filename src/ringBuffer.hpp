@@ -25,6 +25,10 @@ notes:
 #include <atomic>
 #include "types.hpp"
 
+#ifdef close
+#undef close
+#endif
+
 // semaphore template parameter type is ptrdiff_t (type for the update param in the release() function)
 // setting its max to 250 means we're saying, 250 is the max we can release at once (really we'll keep it at 1 for this)
 static constexpr std::ptrdiff_t SEM_BUFFER_CAPACITY = 250;
@@ -47,7 +51,7 @@ public:
     size_t drain(T *dest);
     void close();
     size_t get_count() const { return count_.load(std::memory_order_acquire); }; 
-
+    void get_data_snapshot(std::vector<T>* dest) const;
 private:
     size_t const capacity_;
     size_t tailIdx_ = 0;
@@ -64,6 +68,22 @@ template<typename T>
 ringBuffer_C<T>::ringBuffer_C(size_t capacity)
 : capacity_(capacity), sem_buffer_slots_available(static_cast<std::ptrdiff_t>(capacity)), sem_data_items_available(0) {
     ringBufferArr.resize(capacity_);
+}
+
+template<typename T>
+void ringBuffer_C<T>::get_data_snapshot(std::vector<T>* dest) const {
+    dest->clear();
+    std::size_t currCount = count_.load(std::memory_order_acquire);
+    dest->resize(currCount);
+    std::size_t it = headIdx_;
+    for(std::size_t i=0;i<currCount;i++ ){
+        (*dest)[i] = ringBufferArr[it];
+        it++;
+        // wraparound
+        if(it>=capacity_){
+            it=0;
+        }
+    }
 }
 
 template<typename T>

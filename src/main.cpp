@@ -19,14 +19,26 @@
 #include <string_view>
 #include "FeatureExtractor.hpp"
 #include <cstdlib>
+#include <cerrno>
+#include <cstring>
+#include "logger.hpp"
+
+#if CALIBRATION_MODE
+#include <fstream>
+#endif
+
+#if !I2C_MOCK && defined(__linux__)
+// raspberry pi path
 #include <linux/input.h> // Linux evdev: struct input_event, EV_* types, KEY_* codes
 #include <fcntl.h> // open(), O_RDONLY, O_NONBLOCK, O_CLOEXEC
 #include <unistd.h> // read(), close()
 #include <poll.h> // poll(), struct pollfd, POLLIN, POLLERR, POLLHUP
-#include <cerrno>
-#include <cstring>
-#if CALIBRATION_MODE
-#include <fstream>
+#endif
+
+#include <onnxruntime_cxx_api.h>
+
+#ifdef close
+#undef close
 #endif
 
 // Global "please stop" flag set by Ctrl+C (SIGINT) to shut down cleanly
@@ -85,7 +97,6 @@ void producer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
         tick_count++;
         accel_burst_sample.tick = tick_count;
 #if CALIBRATION_MODE
-// does this need a mutex guard or is atomic sufficient?
         accel_burst_sample.active_label = g_record.load(std::memory_order_acquire); // reader = acquire
 
 #endif // CALIBRATION_MODE
@@ -101,8 +112,6 @@ void producer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
     rb.close();
 }
 
-// note ctrl+c exit handled on producer side so only one thread reads g_stop
-// when we close the ring buffer, [rb.close() above], pop will return false when consumer tries to pop -> clean exit; otherwise, blocking
 void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, OnnxClassifier_C& classifier){
     using namespace std::chrono_literals;
     logger::tlabel = "consumer";
@@ -113,21 +122,13 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
     accel_burst_t temp; // placeholder for accel burst storage 
     FeatureVector_C ftrVec(cfgs);
 
-    /*
-    // wait for first signal that we've reached the WINDOW_SAMPLES length in the buffer
-    while(rb.get_count() < window.winLen){
-        // don't have enough data
-        continue;
-    }
-    */
-
 #if CALIBRATION_MODE
     std::ofstream csv("accel_calib_data.csv");
     csv << "tick,x,y,z,active\n";
     size_t rows_written = 0;
 #endif
 
-    // BUILD FIRST WINDOW - do we need a mutex guard here?  i kinda dont think so because no one else is gonna be popping? and consumer/producer push/pop is handled intrinsically by semaphores in ringbuf class
+    // BUILD FIRST WINDOW - consumer/producer push/pop is handled intrinsically by semaphores in ringbuf class
     for(int i=0;i<window.winLen;i++){
         if(!rb.pop(&temp)){ // internally wait here (pop cmd is blocking)
             break; // throw error
@@ -139,24 +140,16 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
     }
 
     while(!g_stop.load(std::memory_order_relaxed)){
-        // emit window to feature extractor (DEEEP COPY)
+        // emit window to feature extractor
         window.feature_vector = ftrVec.writeFeatureVector(window);
         // classify
         classifier.classify(window.feature_vector);
 
-        //featureExtractor.readin(window);
         // pop out half of window for 50% hop
         accel_burst_t discard{};
         for(size_t k=0;k<window.winHop;k++){
             window.sliding_window.pop(&discard); 
         }
-        // dont think i need get count cuz pressure is handled intrinsically in ring buff
-        /*
-        // after the first time, we increment by hop size rather than window size (as long as we have hop size available in array, we can pull a window)
-        while(rb.get_count() < window.winHop){
-            continue;
-        }
-        */
         // we have enough to make a window from head by adding the hop amount 
         // keep the tail of the sliding window, overwrite the head (older) 
         for(size_t j=0;j<window.winHop;j++){
@@ -287,8 +280,24 @@ void joystick_thread_fn(const char* devnode = "/dev/input/event4") {
 
 int main() {
     LOG_ALWAYS("start (VERBOSE=" << logger::verbose() << ")");
+
+#ifdef USE_ONNXRUNTIME
+    try {
+        LOG_ALWAYS("Initializing ONNX Runtime...");
+        Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "sensehat_test");
+        Ort::SessionOptions session_options;
+        session_options.SetIntraOpNumThreads(1);
+
+        const wchar_t* model_path = L"src/models/veronica/har_dynamic.onnx";
+
+        Ort::Session session(env, model_path, session_options);
+        LOG_ALWAYS("ONNX Runtime: model loaded successfully.");
+    } catch (const Ort::Exception& e) {
+        LOG_ALWAYS("ONNX Runtime error: " << e.what());
+    }
+#endif
     
-    std::string jsonPath = "models/veronica/har_hierarchy_meta.json";
+    std::string jsonPath = "src/models/veronica/har_hierarchy_meta.json";
     
     ringBuffer_C<accel_burst_t> ringBuf(RING_BUFFER_CAPACITY);
     OnnxClassifier_C classifier(jsonPath);
