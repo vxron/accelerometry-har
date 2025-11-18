@@ -17,6 +17,7 @@ enum classes_e {
     CLASS_SITTING,
     CLASS_STANDING,
     CLASS_TURNING_ON_SPOT,
+    CLASS_UNKNOWN
 };
 
 struct accel_burst_t {
@@ -28,3 +29,10 @@ struct accel_burst_t {
     bool active_label; // should obtain from joystick state; 1 means we're in active block
 #endif
 };
+
+#if !CALIBRATION_MODE
+struct RTDecisionSnapShot {
+    int raw_id = -1;
+    classes_e decision = CLASS_UNKNOWN;
+};
+#endif

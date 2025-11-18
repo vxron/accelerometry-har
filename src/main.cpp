@@ -17,14 +17,16 @@
 #include <cstdint>
 #include <iomanip>
 #include <string_view>
-#include "FeatureExtractor.hpp"
 #include <cstdlib>
 #include <cerrno>
 #include <cstring>
 #include "logger.hpp"
-
-#if CALIBRATION_MODE
+#include <optional>
 #include <fstream>
+
+#if !CALIBRATION_MODE
+#include "FeatureExtractor.hpp"
+#include <onnxruntime_cxx_api.h>
 #endif
 
 #if !I2C_MOCK && defined(__linux__)
@@ -35,8 +37,6 @@
 #include <poll.h> // poll(), struct pollfd, POLLIN, POLLERR, POLLHUP
 #endif
 
-#include <onnxruntime_cxx_api.h>
-
 #ifdef close
 #undef close
 #endif
@@ -46,6 +46,9 @@ static std::atomic<bool> g_stop{false};
 
 #if CALIBRATION_MODE
 static std::atomic<bool> g_record{false}; // toggled by joystick presses
+#else
+static std::atomic<int> g_last_class_id{-1}; 
+static std::atomic<int> g_last_enum{-1}; // store enum as int
 #endif
 
 // Interrupt signal sent when ctrl+c is pressed
@@ -112,15 +115,26 @@ void producer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
     rb.close();
 }
 
+#if CALIBRATION_MODE
+void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
+#else 
 void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, OnnxClassifier_C& classifier){
+#endif
     using namespace std::chrono_literals;
     logger::tlabel = "consumer";
     LOG_ALWAYS("consumer start");
     size_t tick_count = 0;
 
     sliding_window_t window; // should acquire the data for 1 window with that many pops n then increment by hop... 
-    accel_burst_t temp; // placeholder for accel burst storage 
+    accel_burst_t temp; // placeholder for accel burst storage
+#if !CALIBRATION_MODE 
     FeatureVector_C ftrVec(cfgs);
+
+    // CSV for runtime decisions
+    std::ofstream decisions_csv("rt_decisions.csv");
+    decisions_csv << "window_idx,last_tick,raw_id,label\n";
+    size_t window_idx = 0;
+#endif
 
 #if CALIBRATION_MODE
     std::ofstream csv("accel_calib_data.csv");
@@ -131,7 +145,9 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
     // BUILD FIRST WINDOW - consumer/producer push/pop is handled intrinsically by semaphores in ringbuf class
     for(int i=0;i<window.winLen;i++){
         if(!rb.pop(&temp)){ // internally wait here (pop cmd is blocking)
-            break; // throw error
+            // exit due to error
+            g_stop.store(true, std::memory_order_relaxed);
+            break;
         }
         else {
             // pop successful -> push into sliding window
@@ -140,10 +156,49 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
     }
 
     while(!g_stop.load(std::memory_order_relaxed)){
+
+#if !CALIBRATION_MODE
         // emit window to feature extractor
         window.feature_vector = ftrVec.writeFeatureVector(window);
         // classify
-        classifier.classify(window.feature_vector);
+        int decision = classifier.classify(window.feature_vector);
+        // save somewhere + show in real time? 
+        if(decision == cfgs.sit_id){
+            window.decision = CLASS_SITTING;
+            window.decision_string = "sit";
+        }
+        else if (decision == cfgs.stand_id){
+            window.decision = CLASS_STANDING;
+            window.decision_string = "stand";
+        }
+        else if (decision == cfgs.walk_id){
+            window.decision = CLASS_WALKING;
+            window.decision_string = "walk";
+        }
+        else if (decision == cfgs.turn_id){
+            window.decision = CLASS_TURNING_ON_SPOT;
+            window.decision_string = "turn";
+        }
+        else {
+            window.decision = CLASS_UNKNOWN;
+            window.decision_string = "unknown";
+        }
+        // visualizations in real time to show whats happening at all svm levels (preclassifier, 1 and 2)
+        g_last_class_id.store(decision, std::memory_order_release);
+        g_last_enum.store(static_cast<int>(window.decision), std::memory_order_release);
+        // =========== CSV LOGGING ================
+        window_idx++;
+        // `temp` always holds the most recent sample pushed into the window
+        // so we can use its tick to indicate num accel_burst_t in the window now
+        decisions_csv << window_idx << ','
+                      << temp.tick << ','
+                      << decision << ','
+                      << window.decision_string << '\n';
+
+        if (window_idx % 50 == 0) {
+            decisions_csv.flush();
+        }
+#endif
 
         // pop out half of window for 50% hop
         accel_burst_t discard{};
@@ -154,13 +209,16 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
         // keep the tail of the sliding window, overwrite the head (older) 
         for(size_t j=0;j<window.winHop;j++){
             if(!rb.pop(&temp)){
-                break; // throw error
+                // exit due to error
+                g_stop.store(true, std::memory_order_relaxed);
+                break;
             }
             else {
                 // pop successful -> push into sliding window
                 window.sliding_window.push(temp);
                 // each successful pop is something we've acquired from rb
 #if CALIBRATION_MODE
+                tick_count++;
                 if((tick_count%120)==0){
                     LOG_ALWAYS(std::to_string(temp.tick) + " " + std::to_string(temp.x) + " " + std::to_string(temp.y) + " " + std::to_string(temp.z) + " " + std::to_string(temp.active_label) + "\n");
                 }
@@ -179,10 +237,12 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
 #if CALIBRATION_MODE
     csv.flush();
     csv.close();
+#else
+    decisions_csv.flush();
 #endif
 }
 
-#if CALIBRATION_MODE
+#if CALIBRATION_MODE && !I2C_MOCK && defined(__linux__)
 static inline bool is_center(uint16_t code){
     return code == KEY_ENTER || code == KEY_SPACE; // some images map center to SPACE instead of ENTER
 }
@@ -281,28 +341,14 @@ void joystick_thread_fn(const char* devnode = "/dev/input/event4") {
 int main() {
     try {
     LOG_ALWAYS("start (VERBOSE=" << logger::verbose() << ")");
-
-#ifdef USE_ONNXRUNTIME
-    try {
-        LOG_ALWAYS("Initializing ONNX Runtime...");
-        Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "sensehat_test");
-        Ort::SessionOptions session_options;
-        session_options.SetIntraOpNumThreads(1);
-
-        const wchar_t* model_path = L"src/models/veron/har_dynamic.onnx";
-
-        Ort::Session session(env, model_path, session_options);
-        LOG_ALWAYS("ONNX Runtime: model loaded successfully.");
-    } catch (const Ort::Exception& e) {
-        LOG_ALWAYS("ONNX Runtime error: " << e.what());
-    }
-#endif
-    
-    std::string jsonPath = "src/models/veron/har_hierarchy_meta.json";
     
     ringBuffer_C<accel_burst_t> ringBuf(RING_BUFFER_CAPACITY);
+
+#if !CALIBRATION_MODE
+    std::string jsonPath = "src/models/veron/har_hierarchy_meta.json";
     OnnxClassifier_C classifier(jsonPath);
     OnnxConfigs_S cfgs = classifier.getConfigs();
+#endif
 
     // interrupt caused by SIGINT -> 'handle_singint' acts like ISR (callback handle)
     std::signal(SIGINT, handle_sigint);
@@ -310,8 +356,12 @@ int main() {
     // START THREADS. We pass the ring buffer by reference (std::ref) becauase each thread needs the actual shared 'ringBuf' instance, not just a copy...
     // This builds a new thread that starts executing immediately, running producer_thread_rn in parallel with the main thread (same for cons)
     std::thread prod(producer_thread_fn,std::ref(ringBuf));
+#if !CALIBRATION_MODE
     std::thread cons(consumer_thread_fn,std::ref(ringBuf), std::ref(cfgs), std::ref(classifier));
-#if CALIBRATION_MODE
+#else
+    std::thread cons(consumer_thread_fn,std::ref(ringBuf));
+#endif
+#if CALIBRATION_MODE && !I2C_MOCK && defined(__linux__)
     std::thread joys(joystick_thread_fn,"/dev/input/event4");
 #endif
 

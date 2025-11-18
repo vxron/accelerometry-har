@@ -7,6 +7,7 @@ Goal:
 #include <string>
 #include <memory>
 #include <onnxruntime_cxx_api.h>
+#include "types.hpp"
 
 #include <onnxruntime_c_api.h>
 

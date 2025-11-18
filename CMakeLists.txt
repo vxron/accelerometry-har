@@ -13,13 +13,23 @@ option(CALIBRATION_MODE "Enable calibration-mode joystick gating" OFF)
 option(USE_ONNXRUNTIME "Enable ONNX Runtime inference" ON)
 
 # Main app
+if (CALIBRATION_MODE)
+set(USE_ONNXRUNTIME OFF CACHE BOOL "Enable ONNX Runtime inference" FORCE)
 add_executable(sensehat_fsm_demo
   src/main.cpp
   src/lsm9ds1.cpp
-  src/logger.cpp
-  src/FeatureExtractor.cpp
-  src/ONXXClassifier.cpp   
+  src/logger.cpp 
 )
+target_compile_definitions(sensehat_fsm_demo PRIVATE CALIBRATION_MODE=1)
+else()
+add_executable(sensehat_fsm_demo
+  src/main.cpp
+  src/lsm9ds1.cpp
+  src/logger.cpp 
+  src/FeatureExtractor.cpp
+  src/ONXXClassifier.cpp  
+)
+endif()
 
 target_include_directories(sensehat_fsm_demo PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -43,10 +53,6 @@ else()
   #target_include_directories(i2c_selftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   #target_compile_definitions(i2c_selftest PRIVATE I2C_LINUX=1)
   #target_link_libraries(i2c_selftest PRIVATE Threads::Threads)
-endif()
-
-if (CALIBRATION_MODE)
-  target_compile_definitions(sensehat_fsm_demo PRIVATE CALIBRATION_MODE=1)
 endif()
 
 find_package(Threads REQUIRED)

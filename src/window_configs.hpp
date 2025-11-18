@@ -2,6 +2,7 @@
 #include <cstddef>
 #include "ringBuffer.hpp"
 #include <vector>
+#include <string>
 
 // central place for sizes used across headers
 inline constexpr std::size_t RING_BUFFER_CAPACITY       = 600;  // ring buffer capacity
@@ -13,6 +14,9 @@ struct sliding_window_t {
     size_t const winLen = WINDOW_SAMPLES; // period of about 200*8ms = 1.6s
     size_t const winHop = WINDOW_HOP; // amount to jump for next window
     ringBuffer_C<accel_burst_t> sliding_window{WINDOW_SAMPLES};
-    // might want to have the feature_vector independent of window acc...
+#if !CALIBRATION_MODE
     std::vector<float> feature_vector; // input to onxx classify API
+    classes_e decision;
+    std::string decision_string = "unknown";
+#endif
 };
