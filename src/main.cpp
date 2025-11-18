@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <string_view>
+#include "FeatureExtractor.hpp"
 #include <cstdlib>
 #include <linux/input.h> // Linux evdev: struct input_event, EV_* types, KEY_* codes
 #include <fcntl.h> // open(), O_RDONLY, O_NONBLOCK, O_CLOEXEC
@@ -102,7 +103,7 @@ void producer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
 
 // note ctrl+c exit handled on producer side so only one thread reads g_stop
 // when we close the ring buffer, [rb.close() above], pop will return false when consumer tries to pop -> clean exit; otherwise, blocking
-void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
+void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, OnnxClassifier_C& classifier){
     using namespace std::chrono_literals;
     logger::tlabel = "consumer";
     LOG_ALWAYS("consumer start");
@@ -110,6 +111,8 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
 
     sliding_window_t window; // should acquire the data for 1 window with that many pops n then increment by hop... 
     accel_burst_t temp; // placeholder for accel burst storage 
+    FeatureVector_C ftrVec(cfgs);
+
     /*
     // wait for first signal that we've reached the WINDOW_SAMPLES length in the buffer
     while(rb.get_count() < window.winLen){
@@ -137,6 +140,10 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
 
     while(!g_stop.load(std::memory_order_relaxed)){
         // emit window to feature extractor (DEEEP COPY)
+        window.feature_vector = ftrVec.writeFeatureVector(window);
+        // classify
+        classifier.classify(window.feature_vector);
+
         //featureExtractor.readin(window);
         // pop out half of window for 50% hop
         accel_burst_t discard{};
@@ -280,8 +287,12 @@ void joystick_thread_fn(const char* devnode = "/dev/input/event4") {
 
 int main() {
     LOG_ALWAYS("start (VERBOSE=" << logger::verbose() << ")");
-
+    
+    std::string jsonPath = "models/veronica/har_hierarchy_meta.json";
+    
     ringBuffer_C<accel_burst_t> ringBuf(RING_BUFFER_CAPACITY);
+    OnnxClassifier_C classifier(jsonPath);
+    OnnxConfigs_S cfgs = classifier.getConfigs();
 
     // interrupt caused by SIGINT -> 'handle_singint' acts like ISR (callback handle)
     std::signal(SIGINT, handle_sigint);
@@ -289,7 +300,7 @@ int main() {
     // START THREADS. We pass the ring buffer by reference (std::ref) becauase each thread needs the actual shared 'ringBuf' instance, not just a copy...
     // This builds a new thread that starts executing immediately, running producer_thread_rn in parallel with the main thread (same for cons)
     std::thread prod(producer_thread_fn,std::ref(ringBuf));
-    std::thread cons(consumer_thread_fn,std::ref(ringBuf));
+    std::thread cons(consumer_thread_fn,std::ref(ringBuf), std::ref(cfgs), std::ref(classifier));
 #if CALIBRATION_MODE
     std::thread joys(joystick_thread_fn,"/dev/input/event4");
 #endif
@@ -309,4 +320,5 @@ int main() {
 #endif
     return 0;
 }
+
 

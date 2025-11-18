@@ -9,7 +9,7 @@ Goal:
 
 // These must come from parsing json meta.
 struct OnnxConfigs_S {
-    std::vector<std::string> feat_names;
+    std::vector<std::string> feat_names; // global order for full feature vector
     // indices for features we've selected for diff classifiers
     std::vector<int> intensity_idx;
     std::vector<int> static_idx;
@@ -34,6 +34,9 @@ public:
     // Simple PUBLIC API for making classifications from input vec
     // full_features should contain all ftrs used in one of the 3 classifiers and match feat-names
     int classify(const std::vector<float>& full_features);
+
+    // config getter for feature extractor and other modules who need to know (& cant change these configs)
+    const OnnxConfigs_S getConfigs() const { return cfg_; };
 private:
     int run_model(const std::vector<float>& full_features, ClassifierStages_E model) const;
     
@@ -48,7 +51,7 @@ private:
     std::string input_name_int_;
     std::string input_name_static_;
     std::string input_name_dynamic_;
-    
+
     std::string output_name_int_;
     std::string output_name_static_;
     std::string output_name_dynamic_;
