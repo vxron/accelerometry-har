@@ -279,6 +279,7 @@ void joystick_thread_fn(const char* devnode = "/dev/input/event4") {
 #endif // CALIBRATION_MODE
 
 int main() {
+    try {
     LOG_ALWAYS("start (VERBOSE=" << logger::verbose() << ")");
 
 #ifdef USE_ONNXRUNTIME
@@ -288,7 +289,7 @@ int main() {
         Ort::SessionOptions session_options;
         session_options.SetIntraOpNumThreads(1);
 
-        const wchar_t* model_path = L"src/models/veronica/har_dynamic.onnx";
+        const wchar_t* model_path = L"src/models/veron/har_dynamic.onnx";
 
         Ort::Session session(env, model_path, session_options);
         LOG_ALWAYS("ONNX Runtime: model loaded successfully.");
@@ -297,7 +298,7 @@ int main() {
     }
 #endif
     
-    std::string jsonPath = "src/models/veronica/har_hierarchy_meta.json";
+    std::string jsonPath = "src/models/veron/har_hierarchy_meta.json";
     
     ringBuffer_C<accel_burst_t> ringBuf(RING_BUFFER_CAPACITY);
     OnnxClassifier_C classifier(jsonPath);
@@ -328,6 +329,13 @@ int main() {
     joys.join();
 #endif
     return 0;
+    } catch (const std::exception& ex) {
+        LOG_ALWAYS("FATAL: unhandled exception in main: " << ex.what());
+        return 1;
+    } catch (...) {
+        LOG_ALWAYS("FATAL: unknown exception in main");
+        return 1;
+    }
 }
 
 
