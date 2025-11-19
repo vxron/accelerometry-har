@@ -64,7 +64,6 @@ int lsm9ds1_driver::lsm9ds1_close() {
 }
 
 int lsm9ds1_driver::lsm9ds1_read_burst(uint8_t start_reg, accel_burst_t* dest){
-  LOG_ALWAYS("lsm9ds1_read_burst enter, reg=" << int(start_reg));
   if(is_open_ == false || !dest) {
     return -ENODEV;
   }
@@ -72,13 +71,6 @@ int lsm9ds1_driver::lsm9ds1_read_burst(uint8_t start_reg, accel_burst_t* dest){
   std::array<uint8_t, 6> temp_arr;
   const int rc = bus_.readBurst6(start_reg, temp_arr.data()); // .data() turns std array to ptr
   if (rc != 0) return rc; 
-
-  if ((++dbg % 120) == 0) { // ~1s at 119Hz
-    LOG_ALWAYS("raw: "
-      << int(temp_arr[0]) << "," << int(temp_arr[1]) << " "
-      << int(temp_arr[2]) << "," << int(temp_arr[3]) << " "
-      << int(temp_arr[4]) << "," << int(temp_arr[5]));
-  }
 
 
 

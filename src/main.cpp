@@ -219,7 +219,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
                 // each successful pop is something we've acquired from rb
 #if CALIBRATION_MODE
                 tick_count++;
-                if((tick_count%120)==0){
+                if((tick_count%2000)==0){
                     LOG_ALWAYS(std::to_string(temp.tick) + " " + std::to_string(temp.x) + " " + std::to_string(temp.y) + " " + std::to_string(temp.z) + " " + std::to_string(temp.active_label) + "\n");
                 }
                 
@@ -288,11 +288,9 @@ void joystick_thread_fn(const char* devnode = "/dev/input/event4") {
         LOG_ALWAYS(std::to_string(num_ready) + " value of num_ready");
         if (num_ready == 0) {
             // Timeout: nothing to read; loop to re-check g_stop
-            LOG_ALWAYS("if statement 1");
             continue;
         }
         if (num_ready < 0) {
-            LOG_ALWAYS("if statement 2");
             if (errno == EINTR) continue; // interrupted by signal: try again
             std::cerr << "poll() failed: " << std::strerror(errno) << "\n";
             break;
@@ -300,7 +298,6 @@ void joystick_thread_fn(const char* devnode = "/dev/input/event4") {
 
         // The kernel sets fds[0].revents to describe what happened on that fd.
         if (fds[0].revents & POLLIN) {
-            LOG_ALWAYS("if statement 3");
           // fd is readable: drain all pending input_event structs.
           // struct input_event (from <linux/input.h>) describes one event:
           //   .type  (e.g., EV_KEY for key/button events)
@@ -318,9 +315,9 @@ void joystick_thread_fn(const char* devnode = "/dev/input/event4") {
               break;
             }
 
-            //if (ev.type != EV_KEY) continue;
-            // value: 1 for press, 0 for release
-            if(ev.value == 1 || ev.value == 0){
+            if (ev.type != EV_KEY) continue;
+            // value: 1 for press, 0 for release -> toggle every release
+            if(ev.value == 1){
                 auto now = clock::now();
                 if(now - last_toggle >= debounce) { // guard
                     // toggle g_record atomic on
