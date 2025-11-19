@@ -5,7 +5,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Toggle mock vs linux HAL (default: mock on Windows)
+# Toggle mock vs linux HAL (default: mock)
 option(USE_MOCK_HAL "Use mock I2C HAL" ON)
 option(CALIBRATION_MODE "Enable calibration-mode joystick gating" OFF)
 
@@ -19,6 +19,7 @@ add_executable(sensehat_fsm_demo
   src/main.cpp
   src/lsm9ds1.cpp
   src/logger.cpp 
+  src/ledmatrix.cpp
 )
 target_compile_definitions(sensehat_fsm_demo PRIVATE CALIBRATION_MODE=1)
 else()
@@ -27,7 +28,8 @@ add_executable(sensehat_fsm_demo
   src/lsm9ds1.cpp
   src/logger.cpp 
   src/FeatureExtractor.cpp
-  src/ONXXClassifier.cpp  
+  src/ONXXClassifier.cpp
+  src/ledmatrix.cpp  
 )
 endif()
 
@@ -36,6 +38,7 @@ target_include_directories(sensehat_fsm_demo PRIVATE
 )
 
 # I2C_MOCK flag: means we're on WIN32; otherwise (real) has I2CMOCK = 0
+# Default: mock on Windows and on Pi UNLESS OVERWRITTEN
 if (WIN32 OR USE_MOCK_HAL)
   target_compile_definitions(sensehat_fsm_demo PRIVATE I2C_MOCK=1)
   target_sources(sensehat_fsm_demo PRIVATE src/i2c_mock.cpp)

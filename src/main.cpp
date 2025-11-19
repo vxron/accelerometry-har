@@ -23,6 +23,7 @@
 #include "logger.hpp"
 #include <optional>
 #include <fstream>
+#include "ledmatrix.hpp"
 
 #if !CALIBRATION_MODE
 #include "FeatureExtractor.hpp"
@@ -127,9 +128,10 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
 
     sliding_window_t window; // should acquire the data for 1 window with that many pops n then increment by hop... 
     accel_burst_t temp; // placeholder for accel burst storage
+    LedMatrixDriver ledMatrix;
+
 #if !CALIBRATION_MODE 
     FeatureVector_C ftrVec(cfgs);
-
     // CSV for runtime decisions
     std::ofstream decisions_csv("rt_decisions.csv");
     decisions_csv << "window_idx,last_tick,raw_id,label\n";
@@ -137,6 +139,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
 #endif
 
 #if CALIBRATION_MODE
+    ledMatrix.display_calibration_on_matrix(false);
     std::ofstream csv("accel_calib_data.csv");
     csv << "tick,x,y,z,active\n";
     size_t rows_written = 0;
@@ -186,7 +189,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
         // visualizations in real time to show whats happening at all svm levels (preclassifier, 1 and 2)
         g_last_class_id.store(decision, std::memory_order_release);
         g_last_enum.store(static_cast<int>(window.decision), std::memory_order_release);
-        // =========== CSV LOGGING ================
+        // ================== CSV LOGGING ================
         window_idx++;
         // `temp` always holds the most recent sample pushed into the window
         // so we can use its tick to indicate num accel_burst_t in the window now
@@ -198,6 +201,8 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
         if (window_idx % 50 == 0) {
             decisions_csv.flush();
         }
+        // ============== REAL TIME DISPLAY ON MATRIX ============
+        ledMatrix.display_class_on_matrix(window.decision);
 #endif
 
         // pop out half of window for 50% hop
@@ -218,6 +223,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
                 window.sliding_window.push(temp);
                 // each successful pop is something we've acquired from rb
 #if CALIBRATION_MODE
+                ledMatrix.display_calibration_on_matrix(temp.active_label);
                 tick_count++;
                 if((tick_count%120)==0){
                     LOG_ALWAYS(std::to_string(temp.tick) + " " + std::to_string(temp.x) + " " + std::to_string(temp.y) + " " + std::to_string(temp.z) + " " + std::to_string(temp.active_label) + "\n");
