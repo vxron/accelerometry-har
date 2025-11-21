@@ -173,6 +173,13 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
     std::ofstream decisions_csv("rt_decisions.csv");
     decisions_csv << "window_idx,last_tick,raw_id,raw_label,stable_id,stable_label,"
               << "raw_changed,stable_changed,suppressed_change\n";
+    // CSV for full feature vectors (debug)
+    std::ofstream ftr_csv("rt_features.csv");
+    ftr_csv << "window_idx";
+    for (const auto& name : cfgs.feat_names) {
+        ftr_csv << ',' << name;
+    }
+    ftr_csv << '\n';
 
     size_t window_idx = 0;
     // Temporal smoothing against noisy transitions (timer guard)
@@ -208,6 +215,18 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
 #if !CALIBRATION_MODE
         // (1) emit window to feature extractor
         window.feature_vector = ftrVec.writeFeatureVector(window);
+
+        // log full feature vector (debug)
+        window_idx++;
+        ftr_csv << window_idx;
+        for (float v : window.feature_vector) {
+            ftr_csv << ',' << v;
+        }
+        ftr_csv << '\n';
+        if (window_idx % 100 == 0) {
+            ftr_csv.flush();
+        }
+
         // (2) classify
         int decision = classifier.classify(window.feature_vector);
 
@@ -361,6 +380,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
     csv.close();
 #else
     decisions_csv.flush();
+    ftr_csv.flush();
 #endif
 }
 

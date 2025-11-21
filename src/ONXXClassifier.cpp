@@ -8,6 +8,21 @@
 
 using json = nlohmann::json;
 
+namespace {
+    std::ofstream& stage_log(ClassifierStage_E stage) {
+        static std::ofstream int_csv("rt_intensity_inputs.csv");
+        static std::ofstream static_csv("rt_static_inputs.csv");
+        static std::ofstream dyn_csv("rt_dynamic_inputs.csv");
+
+        switch (stage) {
+            case ClassifierStage_E::Intensity:    return int_csv;
+            case ClassifierStage_E::StaticBranch: return static_csv;
+            case ClassifierStage_E::DynamicBranch:return dyn_csv;
+        }
+        return int_csv; // fallback
+    }
+}
+
 OnnxClassifier_C::OnnxClassifier_C(const std::string& meta_json_path) 
   : env_(ORT_LOGGING_LEVEL_WARNING, "har"), mem_info_(Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU)) 
 {
@@ -70,6 +85,26 @@ OnnxClassifier_C::OnnxClassifier_C(const std::string& meta_json_path)
     auto int_model_path    = (base_dir / int_onnx_file).string();
     auto static_model_path = (base_dir / static_onnx_file).string();
     auto dyn_model_path    = (base_dir / dyn_onnx_file).string();
+
+    // After filling cfg_
+    LOG_ALWAYS("ONNX CFG: global IDs sit="   << cfg_.sit_id
+              << " stand="  << cfg_.stand_id
+              << " walk="   << cfg_.walk_id
+              << " turn="   << cfg_.turn_id);
+    
+    LOG_ALWAYS("ONNX CFG: intensity_static=" << cfg_.intensity_static
+              << " intensity_dynamic="       << cfg_.intensity_dynamic);
+    
+    LOG_ALWAYS("ONNX CFG: static_sit="  << cfg_.static_sit
+              << " static_stand="       << cfg_.static_stand);
+    
+    LOG_ALWAYS("ONNX CFG: dynamic_walk=" << cfg_.dynamic_walk
+              << " dynamic_turn="        << cfg_.dynamic_turn);
+    
+    LOG_ALWAYS("ONNX model paths:\n"
+               << "  intensity=" << int_model_path    << "\n"
+               << "  static="    << static_model_path << "\n"
+               << "  dynamic="   << dyn_model_path);
 
 #ifdef _WIN32
     std::wstring w_int    = std::filesystem::path(int_model_path).wstring();
@@ -162,6 +197,27 @@ int OnnxClassifier_C::run_model(const std::vector<float>& full_features, Classif
         }
         currIdx++;
     }
+
+        // ======== (2b) OPTIONAL: debug-log ONNX input vector ========
+#ifdef LOG_ONNX_INPUTS
+    {
+        auto& csv = stage_log(model);
+        if (csv.tellp() == 0) {
+            // Write header once: feat_name, value
+            csv << "idx,feat_name,value\n";
+        }
+        for (std::size_t i = 0; i < ftr_idxs->size(); ++i) {
+            int feat_idx = (*ftr_idxs)[i];
+            const std::string& name =
+                (feat_idx >= 0 && feat_idx < (int)cfg_.feat_names.size())
+                ? cfg_.feat_names[feat_idx]
+                : std::string("feat_") + std::to_string(feat_idx);
+
+            csv << i << ',' << name << ',' << input_vals[i] << '\n';
+        }
+        csv.flush(); // small vectors, cheap-ish; you can also buffer if you want
+    }
+#endif
     
     // ======== (3) create onnx input tensor shape [1, n_features] ===========
     int64_t dims[2] = {1, static_cast<int64_t>(input_vals.size())};
@@ -203,6 +259,7 @@ int OnnxClassifier_C::run_model(const std::vector<float>& full_features, Classif
 int OnnxClassifier_C::classify(const std::vector<float>& full_features) {
     
     int intensity_class = run_model(full_features, ClassifierStage_E::Intensity);
+    LOG_ALWAYS("ONNX classify: general_id=" << intensity_class);
     if(intensity_class == cfg_.intensity_static) {
         int static_class = run_model(full_features, ClassifierStage_E::StaticBranch);
         if(static_class == cfg_.static_sit){
