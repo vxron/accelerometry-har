@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <filesystem>
 #include <algorithm>
+#include "logger.hpp"
 
 using json = nlohmann::json;
 
@@ -15,6 +16,7 @@ OnnxClassifier_C::OnnxClassifier_C(const std::string& meta_json_path)
     if (!json_meta) {
         throw std::runtime_error("Failed to open meta JSON: " + meta_json_path);
     }
+    LOG_ALWAYS("OnnxClassifier: meta JSON path = " << meta_json_path);
     json metadata = json::parse(json_meta);
     
     // ========= (2) parse it ===========

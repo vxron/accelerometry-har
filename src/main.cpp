@@ -24,6 +24,7 @@
 #include <optional>
 #include <fstream>
 #include "ledmatrix.hpp"
+#include "SWTimer.hpp"
 
 #if !CALIBRATION_MODE
 #include "FeatureExtractor.hpp"
@@ -125,8 +126,42 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
     using namespace std::chrono_literals;
     logger::tlabel = "consumer";
     LOG_ALWAYS("consumer start");
-    size_t tick_count = 0;
 
+#if !CALIBRATION_MODE
+    // lambda helper func for int id to class (takes ref to cfgs)
+    auto intToClass = [&cfgs](int decision) -> classes_e {
+        if (decision == cfgs.sit_id) {
+            return CLASS_SITTING;
+        } else if (decision == cfgs.stand_id) {
+            return CLASS_STANDING;
+        } else if (decision == cfgs.walk_id) {
+            return CLASS_WALKING;
+        } else if (decision == cfgs.turn_id) {
+            return CLASS_TURNING_ON_SPOT;
+        } else {
+            return CLASS_UNKNOWN;
+        }
+    };
+#endif
+    // lambda helper func for int id to class (takes ref to cfgs)
+    auto classToString = [](classes_e cls) -> std::string {
+        if (cls == CLASS_SITTING) {
+            return "sitting";
+        } else if (cls == CLASS_STANDING) {
+            return "standing";
+        } else if (cls == CLASS_WALKING) {
+            return "walking";
+        } else if (cls == CLASS_TURNING_ON_SPOT) {
+            return "turning_on_spot";
+        } else if (cls == CLASS_UNKNOWN) {
+            return "unknown";
+        } else {
+            // just in case new enums get added and this isn't updated
+            return "unmapped_class";
+        }
+    };
+
+    size_t tick_count = 0;
     sliding_window_t window; // should acquire the data for 1 window with that many pops n then increment by hop... 
     accel_burst_t temp; // placeholder for accel burst storage
     LedMatrixDriver ledMatrix;
@@ -136,8 +171,17 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
     FeatureVector_C ftrVec(cfgs);
     // CSV for runtime decisions
     std::ofstream decisions_csv("rt_decisions.csv");
-    decisions_csv << "window_idx,last_tick,raw_id,label\n";
+    decisions_csv << "window_idx,last_tick,raw_id,raw_label,stable_id,stable_label,"
+              << "raw_changed,stable_changed,suppressed_change\n";
+
     size_t window_idx = 0;
+    // Temporal smoothing against noisy transitions (timer guard)
+    int prev_raw_id    = -1; // last raw classifier output
+    int prev_stable_id = -1; // last committed stable state
+    int pending_id     = -1; // candidate new state
+    bool pending_active = false;
+    SW_Timer_C debounceTimer;
+    constexpr auto GUARD_DURATION = std::chrono::milliseconds{1000}; // 1s guard
 #endif
 
 #if CALIBRATION_MODE
@@ -162,44 +206,112 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
     while(!g_stop.load(std::memory_order_relaxed)){
 
 #if !CALIBRATION_MODE
-        // emit window to feature extractor
+        // (1) emit window to feature extractor
         window.feature_vector = ftrVec.writeFeatureVector(window);
-        // classify
+        // (2) classify
         int decision = classifier.classify(window.feature_vector);
-        // save somewhere + show in real time? 
-        if(decision == cfgs.sit_id){
-            window.decision = CLASS_SITTING;
-            window.decision_string = "sit";
+
+        // Flags for logging
+        bool raw_changed        = false;
+        bool stable_changed     = false;
+        bool suppressed_change  = false;
+
+        // Keep copy of last STABLE (i.e. CONFIRMED decision state)
+        int stable_id     = prev_stable_id;
+
+        // accept first-ever window immediately
+        if(prev_stable_id < 0){
+            stable_id = decision;
+            prev_stable_id = decision;
+            pending_id = -1;
+            pending_active = false;
+            raw_changed = true;
+            stable_changed = true;
         }
-        else if (decision == cfgs.stand_id){
-            window.decision = CLASS_STANDING;
-            window.decision_string = "stand";
-        }
-        else if (decision == cfgs.walk_id){
-            window.decision = CLASS_WALKING;
-            window.decision_string = "walk";
-        }
-        else if (decision == cfgs.turn_id){
-            window.decision = CLASS_TURNING_ON_SPOT;
-            window.decision_string = "turn";
-        }
+
+        // debounce guard for FP transitions
         else {
-            window.decision = CLASS_UNKNOWN;
-            window.decision_string = "unknown";
-        }
+            if(decision != prev_raw_id){
+                raw_changed = true;
+            }
+            else {
+                raw_changed = false;
+            }
+            
+            if(decision == prev_stable_id){
+                // went back to stable state (cancel any pending transition) (i.e. "failed" to pass debounce)
+                stable_id = prev_stable_id;
+                pending_id = -1;
+                pending_active = false;
+                debounceTimer.stop_timer();
+            }
+
+            else {
+                // new raw state different from current stable... 
+                if(!pending_active || decision != pending_id){
+                    // new candidate transition (either we're not alr pending, or we're alr pending but a diff decision was pending)
+                    pending_id = decision;
+                    pending_active = true;
+                    suppressed_change = true;
+                    stable_id = prev_stable_id;
+                    if(debounceTimer.is_started()){
+                        debounceTimer.stop_timer();
+                    }
+                    debounceTimer.start_timer(GUARD_DURATION);
+                }
+
+                else{
+                    // pending is active with sustained pending_id...
+                    // check timer expired
+                    if(debounceTimer.check_timer_expired()){
+                        debounceTimer.stop_timer();
+                        // successful debounce, can transition
+                        stable_id = decision;
+                        prev_stable_id = decision;
+                        pending_id = -1;
+                        pending_active = false;
+                        stable_changed = true;
+                    }
+                    else {
+                        // still waiting
+                        stable_id = prev_stable_id;
+                        suppressed_change = true;
+                    }
+                }
+
+            }
+            
+        } // else
+
+        // assign decision and raw decision to window
+        window.rawDecision = intToClass(decision);
+        window.decision = intToClass(stable_id);
+        std::string stable_label  = classToString(window.decision);
+        std::string raw_label   = classToString(window.rawDecision);
+        window.stuckInDebounce = pending_active || (stable_id != decision);
+
+        prev_raw_id = decision; // to detect next transition
+
         // visualizations in real time to show whats happening at all svm levels (preclassifier, 1 and 2)
-        g_last_class_id.store(decision, std::memory_order_release);
+        // use STABLE (confirmed) states for this 
+        g_last_class_id.store(stable_id, std::memory_order_release);
         g_last_enum.store(static_cast<int>(window.decision), std::memory_order_release);
         // ================== CSV LOGGING ================
         window_idx++;
         // `temp` always holds the most recent sample pushed into the window
         // so we can use its tick to indicate num accel_burst_t in the window now
         decisions_csv << window_idx << ','
-                      << temp.tick << ','
-                      << decision << ','
-                      << window.decision_string << '\n';
+                      << temp.tick << ','           // last sample tick in window
+                      << decision << ','            // raw_id
+                      << raw_label << ','           // raw_label
+                      << stable_id << ','           // stable_id
+                      << stable_label << ','        // stable_label
+                      << (raw_changed       ? 1 : 0) << ','  // raw_changed
+                      << (stable_changed    ? 1 : 0) << ','  // stable_changed
+                      << (suppressed_change ? 1 : 0)         // suppressed_change
+                      << '\n';
 
-        if (window_idx % 50 == 0) {
+        if (window_idx % 100 == 0) {
             decisions_csv.flush();
         }
         // ============== REAL TIME DISPLAY ON MATRIX ============

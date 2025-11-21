@@ -4,13 +4,14 @@
 #include <iostream>
 #include <vector>
 #include <cstdint>
-#include "utils.hpp"
 
 constexpr uint8_t LSM9DS1_SLAVE_I2C_ADDRESS = 0x6A; // 0x6B on some systems
 constexpr uint8_t LSM9DS1_ACCEL_OUT_BASE_REG = 0x28; // starts on accel XL (little Endian)
 constexpr size_t LSM9DS1_NUM_BYTES_PER_BURST = 6; // [xl xh yl yh zl zh]
 constexpr size_t LSM9DS1_WORD_LENGTH_BYTES = 1; // 1 byte per register
 constexpr size_t FS_HZ = 119.0; // sampling frequency
+
+
 
 enum classes_e {
     CLASS_WALKING,

@@ -16,7 +16,8 @@ struct sliding_window_t {
     ringBuffer_C<accel_burst_t> sliding_window{WINDOW_SAMPLES};
 #if !CALIBRATION_MODE
     std::vector<float> feature_vector; // input to onxx classify API
-    classes_e decision;
-    std::string decision_string = "unknown";
+    classes_e decision; // with debounce guards
+    classes_e rawDecision; // what onnx classifier outputs 
+    bool stuckInDebounce = false;
 #endif
 };
