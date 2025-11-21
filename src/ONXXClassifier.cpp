@@ -198,7 +198,7 @@ int OnnxClassifier_C::run_model(const std::vector<float>& full_features, Classif
 
 }
 
-classes_e OnnxClassifier_C::classify(const std::vector<float>& full_features) {
+int OnnxClassifier_C::classify(const std::vector<float>& full_features) {
     
     int intensity_class = run_model(full_features, ClassifierStage_E::Intensity);
     if(intensity_class == cfg_.intensity_static) {

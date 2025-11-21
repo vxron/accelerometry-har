@@ -103,6 +103,7 @@ void producer_thread_fn(ringBuffer_C<accel_burst_t>& rb){
 #if CALIBRATION_MODE
         accel_burst_sample.active_label = g_record.load(std::memory_order_acquire); // reader = acquire
 
+
 #endif // CALIBRATION_MODE
 #endif // I2C_MOCK
         
@@ -129,6 +130,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
     sliding_window_t window; // should acquire the data for 1 window with that many pops n then increment by hop... 
     accel_burst_t temp; // placeholder for accel burst storage
     LedMatrixDriver ledMatrix;
+    ledMatrix.display_welcome_message();
 
 #if !CALIBRATION_MODE 
     FeatureVector_C ftrVec(cfgs);
@@ -139,7 +141,6 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
 #endif
 
 #if CALIBRATION_MODE
-    ledMatrix.display_calibration_on_matrix(false);
     std::ofstream csv("accel_calib_data.csv");
     csv << "tick,x,y,z,active\n";
     size_t rows_written = 0;
@@ -203,6 +204,9 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
         }
         // ============== REAL TIME DISPLAY ON MATRIX ============
         ledMatrix.display_class_on_matrix(window.decision);
+#else 
+        // calib mode display for this cycle
+        ledMatrix.display_calibration_on_matrix(g_record.load(std::memory_order_acquire));
 #endif
 
         // pop out half of window for 50% hop
@@ -223,7 +227,6 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
                 window.sliding_window.push(temp);
                 // each successful pop is something we've acquired from rb
 #if CALIBRATION_MODE
-                ledMatrix.display_calibration_on_matrix(temp.active_label);
                 tick_count++;
                 if((tick_count%2000)==0){
                     LOG_ALWAYS(std::to_string(temp.tick) + " " + std::to_string(temp.x) + " " + std::to_string(temp.y) + " " + std::to_string(temp.z) + " " + std::to_string(temp.active_label) + "\n");
@@ -238,6 +241,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
         }
     }
     // exiting due to producer exiting means we need to close window rb
+    ledMatrix.close_and_reset();
     window.sliding_window.close();
     rb.close();
 #if CALIBRATION_MODE
@@ -348,10 +352,15 @@ int main() {
     ringBuffer_C<accel_burst_t> ringBuf(RING_BUFFER_CAPACITY);
 
 #if !CALIBRATION_MODE
+#ifdef MODEL_META_JSON_PATH
+    std::string jsonPath = MODEL_META_JSON_PATH;
+#else
     std::string jsonPath = "src/models/veron/har_hierarchy_meta.json";
+#endif
+
     OnnxClassifier_C classifier(jsonPath);
     OnnxConfigs_S cfgs = classifier.getConfigs();
-#endif
+#endif // !CALIBRATION_MODE
 
     // interrupt caused by SIGINT -> 'handle_singint' acts like ISR (callback handle)
     std::signal(SIGINT, handle_sigint);

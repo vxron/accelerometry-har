@@ -6,6 +6,8 @@
 #include <cerrno>
 #include <cstring>
 #include <cstddef>
+#include <thread>
+#include <chrono>
 
 struct Rgb {
     uint8_t r;
@@ -131,10 +133,71 @@ constexpr uint8_t CALIB_REC_PATTERN[8][8] = {
     {0,0,0,0,0,0,0,0},
 };
 
+// WELCOME MSG SYMBOLS
+static constexpr uint8_t GLYPH_W[7][5] = {
+    {1,0,0,0,1},
+    {1,0,1,0,1},
+    {1,0,1,0,1},
+    {1,0,1,0,1},
+    {1,0,1,0,1},
+    {1,1,0,1,1},
+    {1,0,0,0,1},
+};
+
+static constexpr uint8_t GLYPH_E[7][5] = {
+    {1,1,1,1,1},
+    {1,0,0,0,0},
+    {1,1,1,1,0},
+    {1,0,0,0,0},
+    {1,0,0,0,0},
+    {1,0,0,0,0},
+    {1,1,1,1,1},
+};
+
+static constexpr uint8_t GLYPH_L[7][5] = {
+    {1,0,0,0,0},
+    {1,0,0,0,0},
+    {1,0,0,0,0},
+    {1,0,0,0,0},
+    {1,0,0,0,0},
+    {1,0,0,0,0},
+    {1,1,1,1,1},
+};
+
+static constexpr uint8_t GLYPH_C[7][5] = {
+    {0,1,1,1,0},
+    {1,0,0,0,1},
+    {1,0,0,0,0},
+    {1,0,0,0,0},
+    {1,0,0,0,0},
+    {1,0,0,0,1},
+    {0,1,1,1,0},
+};
+
+static constexpr uint8_t GLYPH_O[7][5] = {
+    {0,1,1,1,0},
+    {1,0,0,0,1},
+    {1,0,0,0,1},
+    {1,0,0,0,1},
+    {1,0,0,0,1},
+    {1,0,0,0,1},
+    {0,1,1,1,0},
+};
+
+static constexpr uint8_t GLYPH_M[7][5] = {
+    {1,0,0,0,1},
+    {1,1,0,1,1},
+    {1,0,1,0,1},
+    {1,0,1,0,1},
+    {1,0,1,0,1},
+    {1,0,1,0,1},
+    {1,0,1,0,1},
+};
+
 } // namespace
 
 // =================== START DRAWING HELPERS =========================
-static uint16_t LedMatrixDriver::rgb888_to_rgb565(uint8_t r, uint8_t g, uint8_t b)
+static uint16_t rgb888_to_rgb565(uint8_t r, uint8_t g, uint8_t b)
 {
     uint16_t r5 = (r >> 3) & 0x1F;  // 8 bits → 5 bits
     uint16_t g6 = (g >> 2) & 0x3F;  // 8 bits → 6 bits
@@ -161,7 +224,7 @@ static void draw_pattern_to_fb(int fb_fd,
             if (p >= palette_size) p = 0; // safety clamp
 
             const Rgb& c = palette[p];
-            buffer[idx++] = LedMatrixDriver::rgb888_to_rgb565(c.r, c.g, c.b);
+            buffer[idx++] = rgb888_to_rgb565(c.r, c.g, c.b);
         }
     }
 
@@ -207,11 +270,11 @@ void LedMatrixDriver::open_dev_kernel()
 #if !I2C_MOCK && defined(__linux__)
     if (fb_fd_ != -1) return; // already open
 
-    fb_fd_ = ::open("/dev/fb1", O_RDWR | O_CLOEXEC);
+    fb_fd_ = ::open("/dev/fb0", O_RDWR | O_CLOEXEC);
     if (fb_fd_ < 0) {
-        LOG_ALWAYS("LedMatrixDriver: open(/dev/fb1) failed: " << std::strerror(errno));
+        LOG_ALWAYS("LedMatrixDriver: open(/dev/fb0) failed: " << std::strerror(errno));
     } else {
-        LOG_ALWAYS("LedMatrixDriver: opened /dev/fb1");
+        LOG_ALWAYS("LedMatrixDriver: opened /dev/fb0");
     }
 #else
     // mock / non-Linux: just log
@@ -225,8 +288,32 @@ void LedMatrixDriver::close_dev_kernel()
     if (fb_fd_ >= 0) {
         ::close(fb_fd_);
         fb_fd_ = -1;
-        LOG_ALWAYS("LedMatrixDriver: closed /dev/fb1");
+        LOG_ALWAYS("LedMatrixDriver: closed /dev/fb0");
     }
+#endif
+}
+
+void LedMatrixDriver::close_and_reset()
+{
+#if !I2C_MOCK && defined(__linux__)
+    if (fb_fd_ < 0) {
+        open_dev_kernel();
+        if (fb_fd_ < 0) return;
+    }
+
+    // 8x8 = 64 pixels, all black
+    uint16_t buffer[64];
+    std::fill(std::begin(buffer), std::end(buffer),
+              rgb888_to_rgb565(0, 0, 0));
+
+    if (::lseek(fb_fd_, 0, SEEK_SET) < 0) {
+        LOG_ALWAYS("LedMatrixDriver: clear_matrix lseek failed: " << std::strerror(errno));
+        return;
+    }
+
+    const ssize_t bytes_to_write = sizeof(buffer);
+    ssize_t n = ::write(fb_fd_, buffer, bytes_to_write);
+    close_dev_kernel();
 #endif
 }
 
@@ -304,7 +391,7 @@ void LedMatrixDriver::display_calibration_on_matrix(bool active_recording)
     const uint8_t (*pattern)[8] = nullptr;
     std::size_t palette_size = 0;
 
-    if (!recording) {
+    if (!active_recording) {
         palette = CALIB_IDLE_PALETTE;
         palette_size = 3;
         pattern = CALIB_IDLE_PATTERN;
@@ -322,11 +409,90 @@ void LedMatrixDriver::display_calibration_on_matrix(bool active_recording)
         if (fb_fd_ < 0) return;
     }
     draw_pattern_to_fb(fb_fd_, pattern, palette, palette_size);
-#else
-    LOG_ALWAYS("LedMatrixDriver (mock): display_calibration_status recording="
-               << (recording ? "true" : "false"));
 #endif
 }
 
+void LedMatrixDriver::display_welcome_message()
+{
+#if !I2C_MOCK && defined(__linux__)
+    if (fb_fd_ < 0) {
+        open_dev_kernel();
+        if (fb_fd_ < 0) return;
+    }
 
+    using namespace std::chrono_literals;
+
+    constexpr Rgb WELC_PALETTE[3] = {
+        {  5,  0,  25},
+        { 40, 10,  60},
+        {255,105, 180},
+    };
+
+    // Message buffer: 8 rows x N cols (N > 8 so we can scroll).
+    // Letters: "WELCOME" = 7 letters, each 5 cols + 1 col spacing.
+    constexpr int LETTER_W = 5;
+    constexpr int LETTER_H = 7;
+    constexpr int LETTER_SP = 1;
+    constexpr int NUM_LETTERS = 7;
+    constexpr int LEFT_MARGIN = 8;
+    constexpr int RIGHT_MARGIN = 8;
+    constexpr int MSG_COLS =
+        LEFT_MARGIN + NUM_LETTERS * (LETTER_W + LETTER_SP) + RIGHT_MARGIN;
+
+    uint8_t msg[8][MSG_COLS] = {}; // all zeros initially
+
+    auto blit_letter = [&](const uint8_t glyph[7][5], int& cursor_x) {
+        for (int y = 0; y < LETTER_H; ++y) {
+            for (int x = 0; x < LETTER_W; ++x) {
+                if (glyph[y][x]) {
+                    int col = cursor_x + x;
+                    if (col >= 0 && col < MSG_COLS) {
+                        msg[y][col] = 2;
+                    }
+                }
+            }
+        }
+        cursor_x += LETTER_W + LETTER_SP;
+    };
+
+    int cursor_x = LEFT_MARGIN;
+    blit_letter(GLYPH_W, cursor_x);
+    blit_letter(GLYPH_E, cursor_x);
+    blit_letter(GLYPH_L, cursor_x);
+    blit_letter(GLYPH_C, cursor_x);
+    blit_letter(GLYPH_O, cursor_x);
+    blit_letter(GLYPH_M, cursor_x);
+    blit_letter(GLYPH_E, cursor_x);
+
+    // Scroll from off-screen right to off-screen left
+    for (int offset = -8; offset < MSG_COLS; ++offset) {
+        uint8_t frame[8][8];
+
+        for (int y = 0; y < 8; ++y) {
+            for (int x = 0; x < 8; ++x) {
+                int src_x = offset + x;
+                uint8_t idx = 0;
+
+                if (src_x >= 0 && src_x < MSG_COLS) {
+                    uint8_t v = msg[y][src_x];
+                    if (v == 0) {
+                        // background stripe: alternate rows between palette 0 and 1
+                        idx = (y % 2 == 0) ? 0 : 1;
+                    } else {
+                        idx = v;
+                    }
+                } else {
+                    // off-screen, background only
+                    idx = (y % 2 == 0) ? 0 : 1;
+                }
+
+                frame[y][x] = idx;
+            }
+        }
+
+        draw_pattern_to_fb(fb_fd_, frame, WELC_PALETTE, 3);
+        std::this_thread::sleep_for(80ms); // adjust speed
+    }
+#endif
+}
 
