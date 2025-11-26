@@ -181,6 +181,18 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
     }
     ftr_csv << '\n';
 
+    // CSV for features + raw window (for Python verification)
+    std::ofstream ftr_raw_csv("rt_features_with_raw.csv");
+    ftr_raw_csv << "window_idx";
+    for (const auto& name : cfgs.feat_names) {
+        ftr_raw_csv << ',' << name;
+    }
+    // add x0,y0,z0,...,xN-1,yN-1,zN-1 (major-interleaved format)
+    for (size_t i = 0; i < window.winLen; ++i) {
+        ftr_raw_csv << ",x" << i << ",y" << i << ",z" << i;
+    }
+    ftr_raw_csv << '\n';
+
     size_t window_idx = 0;
     // Temporal smoothing against noisy transitions (timer guard)
     int prev_raw_id    = -1; // last raw classifier output
@@ -216,8 +228,14 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
         // (1) emit window to feature extractor
         window.feature_vector = ftrVec.writeFeatureVector(window);
 
-        // log full feature vector (debug)
+        // (2) take non-destructive snapshot of the raw samples in this window
+        std::vector<accel_burst_t> windowSnapshot;
+        window.getWindowSnapshot(&windowSnapshot);
+
+        // (3) increment window index for this iter
         window_idx++;
+
+        // (4a) Log features-only CSV (rt_features.csv)
         ftr_csv << window_idx;
         for (float v : window.feature_vector) {
             ftr_csv << ',' << v;
@@ -227,7 +245,22 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
             ftr_csv.flush();
         }
 
-        // (2) classify
+        // (4b) Log features + raw window (rt_features_with_raw.csv)
+        ftr_raw_csv << window_idx;
+        for (float v : window.feature_vector) {
+            ftr_raw_csv << ',' << v;
+        }
+        for (const auto& s : windowSnapshot) {
+            ftr_raw_csv << ',' << s.x << ',' << s.y << ',' << s.z;
+        }
+        ftr_raw_csv << '\n';
+
+        if (window_idx % 50 == 0) {
+            ftr_csv.flush();
+            ftr_raw_csv.flush();
+        }
+
+        // (5) classify
         int decision = classifier.classify(window.feature_vector);
 
         // Flags for logging
@@ -248,7 +281,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
             stable_changed = true;
         }
 
-        // debounce guard for FP transitions
+        // (6) debounce guard for FP transitions
         else {
             if(decision != prev_raw_id){
                 raw_changed = true;
@@ -302,7 +335,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
             
         } // else
 
-        // assign decision and raw decision to window
+        // (7) assign decision and raw decision to window
         window.rawDecision = intToClass(decision);
         window.decision = intToClass(stable_id);
         std::string stable_label  = classToString(window.decision);
@@ -315,8 +348,8 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
         // use STABLE (confirmed) states for this 
         g_last_class_id.store(stable_id, std::memory_order_release);
         g_last_enum.store(static_cast<int>(window.decision), std::memory_order_release);
-        // ================== CSV LOGGING ================
-        window_idx++;
+        
+        // (4c) MAIN CSV LOGGING (decisions) -> suppressed changes vs true based on debounce guard
         // `temp` always holds the most recent sample pushed into the window
         // so we can use its tick to indicate num accel_burst_t in the window now
         decisions_csv << window_idx << ','
@@ -333,14 +366,15 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
         if (window_idx % 100 == 0) {
             decisions_csv.flush();
         }
-        // ============== REAL TIME DISPLAY ON MATRIX ============
+        
+        // (8) REAL TIME DISPLAY ON MATRIX
         ledMatrix.display_class_on_matrix(window.decision);
 #else 
         // calib mode display for this cycle
         ledMatrix.display_calibration_on_matrix(g_record.load(std::memory_order_acquire));
 #endif
 
-        // pop out half of window for 50% hop
+        // (9) pop out half of window for 50% hop
         accel_burst_t discard{};
         for(size_t k=0;k<window.winHop;k++){
             window.sliding_window.pop(&discard); 
@@ -354,7 +388,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
                 break;
             }
             else {
-                // pop successful -> push into sliding window
+                // (10) pop successful -> push into sliding window
                 window.sliding_window.push(temp);
                 // each successful pop is something we've acquired from rb
 #if CALIBRATION_MODE
@@ -371,7 +405,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
             }
         }
     }
-    // exiting due to producer exiting means we need to close window rb
+    // (11) exiting due to producer exiting means we need to close window rb
     ledMatrix.close_and_reset();
     window.sliding_window.close();
     rb.close();
@@ -381,6 +415,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
 #else
     decisions_csv.flush();
     ftr_csv.flush();
+    ftr_raw_csv.flush();
 #endif
 }
 

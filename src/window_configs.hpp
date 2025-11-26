@@ -20,4 +20,9 @@ struct sliding_window_t {
     classes_e rawDecision; // what onnx classifier outputs 
     bool stuckInDebounce = false;
 #endif
+
+    // helper to get snapshot of data for csv
+    void getWindowSnapshot(std::vector<accel_burst_t> * dest){
+        sliding_window.get_data_snapshot(dest);
+    }
 };

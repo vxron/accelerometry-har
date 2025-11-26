@@ -51,6 +51,8 @@ public:
     size_t drain(T *dest);
     void close();
     size_t get_count() const { return count_.load(std::memory_order_acquire); }; 
+
+    // method to read data without actually popping (for logging purposes in sliding window)
     void get_data_snapshot(std::vector<T>* dest) const;
 private:
     size_t const capacity_;
@@ -70,6 +72,7 @@ ringBuffer_C<T>::ringBuffer_C(size_t capacity)
     ringBufferArr.resize(capacity_);
 }
 
+// this is for the SLIDING WINDOW RB ONLY (containing accel_burst_t)
 template<typename T>
 void ringBuffer_C<T>::get_data_snapshot(std::vector<T>* dest) const {
     dest->clear();
