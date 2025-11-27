@@ -15,7 +15,7 @@ public:
     ~LedMatrixDriver();
     // Draw a colour + letter corresponding to the classified activity
     void display_class_on_matrix(classes_e class_label);
-    void display_calibration_on_matrix(bool active_recording); // true if active block
+    void display_calibration_on_matrix(classes_e active_recording); // true if active block
     void close_and_reset();
     void display_welcome_message();
 private:

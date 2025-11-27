@@ -46,8 +46,11 @@
 // Global "please stop" flag set by Ctrl+C (SIGINT) to shut down cleanly
 static std::atomic<bool> g_stop{false};
 
+// Activity order (cyclical for labelling)
+static constexpr std::array<classes_e, 4> ACTIVITY_ORDER = {CLASS_STANDING, CLASS_WALKING, CLASS_SITTING, CLASS_TURNING_ON_SPOT};
+
 #if CALIBRATION_MODE
-static std::atomic<bool> g_record{false}; // toggled by joystick presses
+static std::atomic<classes_e> g_record{CLASS_UNKNOWN}; // moves through ACTIVITY_ORDER by joystick presses
 #else
 static std::atomic<int> g_last_class_id{-1}; 
 static std::atomic<int> g_last_enum{-1}; // store enum as int
@@ -169,19 +172,14 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
 
 #if !CALIBRATION_MODE 
     FeatureVector_C ftrVec(cfgs);
-    // CSV for runtime decisions
+    
+    // (A) CSV for runtime decisions
     std::ofstream decisions_csv("rt_decisions.csv");
     decisions_csv << "window_idx,last_tick,raw_id,raw_label,stable_id,stable_label,"
               << "raw_changed,stable_changed,suppressed_change\n";
-    // CSV for full feature vectors (debug)
-    std::ofstream ftr_csv("rt_features.csv");
-    ftr_csv << "window_idx";
-    for (const auto& name : cfgs.feat_names) {
-        ftr_csv << ',' << name;
-    }
-    ftr_csv << '\n';
 
-    // CSV for features + raw window (for Python verification)
+    
+    // (B) CSV for features + raw window (for Python verification / debug)
     std::ofstream ftr_raw_csv("rt_features_with_raw.csv");
     ftr_raw_csv << "window_idx";
     for (const auto& name : cfgs.feat_names) {
@@ -204,9 +202,24 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
 #endif
 
 #if CALIBRATION_MODE
+    
+    // (C) Raw (unsegmented) data log
     std::ofstream csv("accel_calib_data.csv");
-    csv << "tick,x,y,z,active\n";
+    csv << "tick,x,y,z,label_id,label_name\n";
     size_t rows_written = 0;
+
+    // (D) per-window training set (raw windows + activity label from joystick)
+    std::ofstream train_csv("training_windows.csv");
+    train_csv << "window_idx"
+              << ",label_id"
+              << ",label_name";
+    for (size_t i = 0; i < window.winLen; ++i) {
+        train_csv << ",x" << i << ",y" << i << ",z" << i;
+    }
+    train_csv << '\n';
+
+    size_t window_idx = 0;
+
 #endif
 
     // BUILD FIRST WINDOW - consumer/producer push/pop is handled intrinsically by semaphores in ringbuf class
@@ -232,35 +245,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
         std::vector<accel_burst_t> windowSnapshot;
         window.getWindowSnapshot(&windowSnapshot);
 
-        // (3) increment window index for this iter
-        window_idx++;
-
-        // (4a) Log features-only CSV (rt_features.csv)
-        ftr_csv << window_idx;
-        for (float v : window.feature_vector) {
-            ftr_csv << ',' << v;
-        }
-        ftr_csv << '\n';
-        if (window_idx % 100 == 0) {
-            ftr_csv.flush();
-        }
-
-        // (4b) Log features + raw window (rt_features_with_raw.csv)
-        ftr_raw_csv << window_idx;
-        for (float v : window.feature_vector) {
-            ftr_raw_csv << ',' << v;
-        }
-        for (const auto& s : windowSnapshot) {
-            ftr_raw_csv << ',' << s.x << ',' << s.y << ',' << s.z;
-        }
-        ftr_raw_csv << '\n';
-
-        if (window_idx % 50 == 0) {
-            ftr_csv.flush();
-            ftr_raw_csv.flush();
-        }
-
-        // (5) classify
+        // (3) classify
         int decision = classifier.classify(window.feature_vector);
 
         // Flags for logging
@@ -281,7 +266,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
             stable_changed = true;
         }
 
-        // (6) debounce guard for FP transitions
+        // (4) debounce guard for FP transitions
         else {
             if(decision != prev_raw_id){
                 raw_changed = true;
@@ -335,7 +320,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
             
         } // else
 
-        // (7) assign decision and raw decision to window
+        // (5) assign decision and raw decision to window
         window.rawDecision = intToClass(decision);
         window.decision = intToClass(stable_id);
         std::string stable_label  = classToString(window.decision);
@@ -349,7 +334,24 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
         g_last_class_id.store(stable_id, std::memory_order_release);
         g_last_enum.store(static_cast<int>(window.decision), std::memory_order_release);
         
-        // (4c) MAIN CSV LOGGING (decisions) -> suppressed changes vs true based on debounce guard
+        // (6) increment window index for this iter
+        window_idx++;
+
+        // (7a) Log features + raw window (rt_features_with_raw.csv) 
+        ftr_raw_csv << window_idx;
+        for (float v : window.feature_vector) {
+            ftr_raw_csv << ',' << v;
+        }
+        for (const auto& s : windowSnapshot) {
+            ftr_raw_csv << ',' << s.x << ',' << s.y << ',' << s.z;
+        }
+        ftr_raw_csv << '\n';
+
+        if (window_idx % 50 == 0) {
+            ftr_raw_csv.flush();
+        }
+
+        // (7b) DECISIONS CSV LOGGING -> suppressed changes vs true based on debounce guard
         // `temp` always holds the most recent sample pushed into the window
         // so we can use its tick to indicate num accel_burst_t in the window now
         decisions_csv << window_idx << ','
@@ -370,7 +372,47 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
         // (8) REAL TIME DISPLAY ON MATRIX
         ledMatrix.display_class_on_matrix(window.decision);
 #else 
-        // calib mode display for this cycle
+        // (1) snapshot current window
+        std::vector<accel_burst_t> windowSnapshot;
+        window.getWindowSnapshot(windowSnapshot);
+
+        // (2) decide window label from sample-level active_label
+        classes_e winLabel = CLASS_UNKNOWN;
+        bool first = true;
+        bool consistent = true;
+
+        for (const auto& s : windowSnapshot) {
+            if (first) {
+                winLabel = s.active_label;
+                first = false;
+            } else {
+                if (s.active_label != winLabel) {
+                    consistent = false;
+                    break;
+                }
+            }
+        }
+
+        // (3) only log training windows if label is consistent and not UNKNOWN
+        if (consistent && winLabel != CLASS_UNKNOWN) {
+            window_idx++;
+            std::string label_name = classToString(winLabel);
+
+            train_csv << window_idx
+                      << ',' << static_cast<int>(winLabel)
+                      << ',' << label_name;
+
+            for (const auto& s : windowSnapshot) {
+                train_csv << ',' << s.x << ',' << s.y << ',' << s.z;
+            }
+            train_csv << '\n';
+
+            if (window_idx % 50 == 0) {
+                train_csv.flush();
+            }
+        }
+
+        // (4) calib mode display for this cycle
         ledMatrix.display_calibration_on_matrix(g_record.load(std::memory_order_acquire));
 #endif
 
@@ -392,15 +434,27 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
                 window.sliding_window.push(temp);
                 // each successful pop is something we've acquired from rb
 #if CALIBRATION_MODE
+                // (7C)
                 tick_count++;
                 if((tick_count%2000)==0){
-                    LOG_ALWAYS(std::to_string(temp.tick) + " " + std::to_string(temp.x) + " " + std::to_string(temp.y) + " " + std::to_string(temp.z) + " " + std::to_string(temp.active_label) + "\n");
+                    LOG_ALWAYS(std::to_string(temp.tick) + " " 
+                               + std::to_string(temp.x) + " " 
+                               + std::to_string(temp.y) + " " 
+                               + std::to_string(temp.z) + " " 
+                               + classToString(temp.active_label) + "\n");
                 }
-                
-                csv << temp.tick << ',' << temp.x << ',' << temp.y << ',' << temp.z << ','
-                    << (temp.active_label ? 1 : 0) << '\n';
+
+                csv << temp.tick << ',' 
+                    << temp.x << ',' << temp.y << ',' << temp.z << ','
+                    << static_cast<int>(temp.active_label) << ','
+                    << classToString(temp.active_label) << '\n';
+            
                 rows_written++;
-                if(rows_written % 500 == 0) { csv.flush(); } // flush every 500 rows for speed 
+                if(rows_written % 500 == 0) { csv.flush(); }
+            
+                // (7D)
+
+
 #endif
             }
         }
@@ -412,9 +466,9 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
 #if CALIBRATION_MODE
     csv.flush();
     csv.close();
+    train_csv.flush();
 #else
     decisions_csv.flush();
-    ftr_csv.flush();
     ftr_raw_csv.flush();
 #endif
 }
@@ -454,9 +508,11 @@ void joystick_thread_fn(const char* devnode = "/dev/input/event4") {
     // poll()’s 3rd arg is a timeout in ms. With 500 ms we periodically wake up
     // to check g_stop; if we set it to -1, poll() would block “forever”.
     const int timeout_ms = 500;
+    int activity_idx = -1;
+    size_t num_activities = ACTIVITY_ORDER.size();
 
     while(!g_stop.load(std::memory_order_relaxed)){
-
+        
         // poll(fds, nfds, timeout_ms):
         //  - returns >0 if at least one fd is ready
         //  - returns  0 on timeout
@@ -494,14 +550,23 @@ void joystick_thread_fn(const char* devnode = "/dev/input/event4") {
 
             if (ev.type != EV_KEY) continue;
             // value: 1 for press, 0 for release -> toggle every release
+            // move thru cyclical activity orders
             if(ev.value == 1){
                 auto now = clock::now();
                 if(now - last_toggle >= debounce) { // guard
-                    // toggle g_record atomic on
-                    bool new_state = !g_record.load(std::memory_order_relaxed);
+                    // move through activity cycle
+                    activity_idx++;
+                    
+                    // wraparound if necessary
+                    if(activity_idx >= num_activities){
+                        activity_idx = 0;
+                    }
+
+                    // record new state
+                    classes_e new_state = ACTIVITY_ORDER[activity_idx];
                     g_record.store(new_state, std::memory_order_release); // release is for writer; acquire is for reader
                     last_toggle = now;
-                    LOG_ALWAYS(std::string("record = ") + (new_state ? "ON" : "OFF"));
+                    LOG_ALWAYS(std::string("record = ") + (enumToString(new_state)));
                 }
             } 
           }  
