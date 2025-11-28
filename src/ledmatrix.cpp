@@ -391,7 +391,7 @@ void LedMatrixDriver::display_calibration_on_matrix(classes_e active_recording)
     const uint8_t (*pattern)[8] = nullptr;
     std::size_t palette_size = 0;
 
-    if (active_recording == CLASS_UNKNOWN) {
+    if (active_recording == CLASS_UNKNOWN || active_recording == CLASS_REST) {
         palette = CALIB_IDLE_PALETTE;
         palette_size = 3;
         pattern = CALIB_IDLE_PATTERN;

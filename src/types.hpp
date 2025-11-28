@@ -17,10 +17,11 @@ enum classes_e {
     CLASS_SITTING,
     CLASS_STANDING,
     CLASS_TURNING_ON_SPOT,
+    CLASS_REST,
     CLASS_UNKNOWN
 };
 
-std::string enumToString(classes_e enumVal){
+inline std::string enumToString(classes_e enumVal){
     switch(enumVal){
         case(CLASS_WALKING):
             return "walk";
@@ -30,6 +31,8 @@ std::string enumToString(classes_e enumVal){
             return "turn";
         case(CLASS_STANDING):
             return "stand";
+        case(CLASS_REST):
+            return "rest";
         default:
             return "unknown";
     }
