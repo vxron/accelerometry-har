@@ -337,16 +337,36 @@ static float rms_vec(const std::vector<float>& v) {
     return std::sqrt(acc / static_cast<float>(v.size()));
 }
 
+static float median_vec(std::vector<float>& v) {
+    if (v.empty()) return 0.0f;
+    std::sort(v.begin(), v.end());
+    const size_t n = v.size();
+    const size_t mid = n / 2;
+    if (n % 2 == 1) {
+        // odd
+        return v[mid];
+    } else {
+        // even: average of the two center values
+        return 0.5f * (v[mid - 1] + v[mid]);
+    }
+}
+
 static float mad_vec(const std::vector<float>& v) {
     if (v.empty()) return 0.0f;
-    std::vector<float> tmp(v);
-    std::nth_element(tmp.begin(), tmp.begin() + tmp.size() / 2, tmp.end());
-    float median = tmp[tmp.size() / 2];
 
-    for (float& x : tmp) x = std::fabs(x - median);
-    std::nth_element(tmp.begin(), tmp.begin() + tmp.size() / 2, tmp.end());
-    return tmp[tmp.size() / 2];
+    // 1) median of original values
+    std::vector<float> tmp = v;
+    float m = median_vec(tmp);
+
+    // 2) abs deviations
+    for (float& x : tmp) {
+        x = std::fabs(x - m);
+    }
+
+    // 3) median of abs deviations
+    return median_vec(tmp);
 }
+
 
 static float iqr_vec(std::vector<float> v) {
     if (v.size() < 2) return 0.0f;
@@ -467,19 +487,23 @@ static float spectral_entropy_mag(FeatureCache_S& ctx) {
     const auto& P = ctx.power;
     if (P.empty()) return 0.0f;
 
-    float sumP = 0.0f;
-    for (float p : P) sumP += std::max(p, 0.0f);
-    if (sumP <= 0.0f) return 0.0f;
-
-    const float eps = 1e-12f;
-    double H = 0.0;
+    double sumP = 0.0;
     for (float p : P) {
-        float pk = std::max(p, 0.0f) / sumP;
-        if (pk > 0.0f) {
-            H += -pk * std::log(pk + eps);
+        sumP += std::max(static_cast<double>(p), 0.0);
+    }
+    if (sumP <= 0.0) return 0.0f;
+
+    double H_nat = 0.0;
+    for (float p : P) {
+        double pk = std::max(static_cast<double>(p), 0.0) / sumP;
+        if (pk > 0.0) {
+            H_nat += -pk * std::log(pk);  // natural log
         }
     }
-    return static_cast<float>(H);
+    // convert nats -> bits
+    const double LOG2 = std::log(2.0);
+    double H_bits = H_nat / LOG2;
+    return static_cast<float>(H_bits);
 }
 
 static float dom_freq_mag(FeatureCache_S& ctx) {
@@ -544,17 +568,117 @@ static float spec_flatness_mag(FeatureCache_S& ctx) {
     return static_cast<float>(geo_mean / ar_mean);
 }
 
-// AR(4) — stub, cached
+// AR(4)
 static void compute_ar4_if_needed(FeatureCache_S& ctx) {
     if (ctx.ar_computed_this_window) return;
 
-    // TODO: implement proper AR(4) here (Yule-Walker / Burg).
-    for (int i = 0; i < AR_ORDER; ++i) {
-        ctx.ar_coeffs[i] = 0.0f;
-    }
+    const auto& m_in = mag_from_xyz(ctx);
+    const size_t N = m_in.size();
+    const int p = AR_ORDER;
+
+    // defaults
+    for (int i = 0; i < p; ++i) ctx.ar_coeffs[i] = 0.0f;
     ctx.ar_resvar = 0.0f;
+
+    if (N <= static_cast<size_t>(p + 2)) {
+        ctx.ar_computed_this_window = true;
+        return;
+    }
+
+    // 1) copy to double + demean
+    std::vector<double> m(N);
+    double mean = 0.0;
+    for (size_t i = 0; i < N; ++i) {
+        mean += static_cast<double>(m_in[i]);
+    }
+    mean /= static_cast<double>(N);
+    for (size_t i = 0; i < N; ++i) {
+        m[i] = static_cast<double>(m_in[i]) - mean;
+    }
+
+    const size_t M = N - p;  // number of rows in X, length of Y
+
+    // 2) Build normal equations: XtX (p x p), Xty (p)
+    double XtX[4][4] = {};
+    double Xty[4]    = {};
+
+    for (size_t t = 0; t < M; ++t) {
+        double y = m[p + t];
+
+        // x_j = m[p - j - 1 + t], j=0..p-1
+        double x[4];
+        for (int j = 0; j < p; ++j) {
+            size_t idx = static_cast<size_t>(p - j - 1) + t;
+            x[j] = m[idx];
+        }
+
+        // accumulate XᵀX and Xᵀy
+        for (int j = 0; j < p; ++j) {
+            Xty[j] += x[j] * y;
+            for (int k = 0; k < p; ++k) {
+                XtX[j][k] += x[j] * x[k];
+            }
+        }
+    }
+
+    // 3) Solve XtX * a = Xty (simple Gaussian elimination, p=4)
+    double A[4][5]; // augmented matrix [XtX | Xty]
+    for (int i = 0; i < p; ++i) {
+        for (int j = 0; j < p; ++j) {
+            A[i][j] = XtX[i][j];
+        }
+        A[i][p] = Xty[i];
+    }
+
+    // Gaussian elimination
+    for (int i = 0; i < p; ++i) {
+        // pivot
+        double pivot = A[i][i];
+        if (std::fabs(pivot) < 1e-12) {
+            // singular-ish; leave coefficients at 0
+            ctx.ar_computed_this_window = true;
+            return;
+        }
+        // normalize row
+        for (int j = i; j <= p; ++j) {
+            A[i][j] /= pivot;
+        }
+        // eliminate
+        for (int r = 0; r < p; ++r) {
+            if (r == i) continue;
+            double factor = A[r][i];
+            for (int c = i; c <= p; ++c) {
+                A[r][c] -= factor * A[i][c];
+            }
+        }
+    }
+
+    double a[4];
+    for (int i = 0; i < p; ++i) {
+        a[i] = A[i][p];
+    }
+
+    // 4) Residual variance: np.var(resid)
+    double acc_resid2 = 0.0;
+    for (size_t t = 0; t < M; ++t) {
+        double y = m[p + t];
+        double y_hat = 0.0;
+        for (int j = 0; j < p; ++j) {
+            size_t idx = static_cast<size_t>(p - j - 1) + t;
+            y_hat += a[j] * m[idx];
+        }
+        double r = y - y_hat;
+        acc_resid2 += r * r;
+    }
+    double var = acc_resid2 / static_cast<double>(M);  // population variance
+
+    for (int i = 0; i < p; ++i) {
+        ctx.ar_coeffs[i] = static_cast<float>(a[i]);
+    }
+    ctx.ar_resvar = static_cast<float>(var);
     ctx.ar_computed_this_window = true;
 }
+
 
 static Ar4Result ar4_mag(FeatureCache_S& ctx) {
     compute_ar4_if_needed(ctx);
