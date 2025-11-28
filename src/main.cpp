@@ -47,7 +47,7 @@
 static std::atomic<bool> g_stop{false};
 
 // Activity order (cyclical for labelling)
-static constexpr std::array<classes_e, 4> ACTIVITY_ORDER = {CLASS_STANDING, CLASS_WALKING, CLASS_SITTING, CLASS_TURNING_ON_SPOT};
+static constexpr std::array<classes_e, 8> ACTIVITY_ORDER = {CLASS_STANDING, CLASS_REST, CLASS_WALKING, CLASS_REST, CLASS_SITTING, CLASS_REST, CLASS_TURNING_ON_SPOT, CLASS_REST};
 
 #if CALIBRATION_MODE
 static std::atomic<classes_e> g_record{CLASS_UNKNOWN}; // moves through ACTIVITY_ORDER by joystick presses
@@ -374,7 +374,7 @@ void consumer_thread_fn(ringBuffer_C<accel_burst_t>& rb, OnnxConfigs_S& cfgs, On
 #else 
         // (1) snapshot current window
         std::vector<accel_burst_t> windowSnapshot;
-        window.getWindowSnapshot(windowSnapshot);
+        window.getWindowSnapshot(&windowSnapshot);
 
         // (2) decide window label from sample-level active_label
         classes_e winLabel = CLASS_UNKNOWN;
